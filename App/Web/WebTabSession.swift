@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import WebKit
@@ -19,11 +20,15 @@ final class WebTabSession: NSObject {
   /// tab's latest URL without polling.
   var onNavigate: (() -> Void)?
 
+  /// Fired when the user picks "Open in New Tab" from a link's context menu.
+  var onOpenInNewTab: ((String) -> Void)?
+
   init(urlString: String) {
     self.currentURLString = urlString
     self.webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
     super.init()
     webView.navigationDelegate = self
+    webView.uiDelegate = self
     webView.allowsBackForwardNavigationGestures = true
     load(urlString)
   }
@@ -75,5 +80,22 @@ extension WebTabSession: WKNavigationDelegate {
     title = webView.title?.isEmpty == false ? webView.title : nil
     if let url = webView.url?.absoluteString { currentURLString = url }
     onNavigate?()
+  }
+}
+
+extension WebTabSession: WKUIDelegate {
+  /// WKWebView on macOS doesn't expose a way to customize the right-click menu
+  /// itself (that API is iOS-only) — but every route to "open this link
+  /// elsewhere" funnels through here regardless of how it was triggered:
+  /// Cmd/middle-click, a target="_blank" link, or picking the native context
+  /// menu's "Open Link in New Window". Returning nil (after grabbing the URL
+  /// ourselves) redirects all of them into a Rootstock tab instead of handing
+  /// the link to a real separate window.
+  func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+               for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+    if let url = navigationAction.request.url {
+      onOpenInNewTab?(url.absoluteString)
+    }
+    return nil
   }
 }

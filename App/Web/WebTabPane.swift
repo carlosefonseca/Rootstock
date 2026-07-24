@@ -14,7 +14,14 @@ struct WebTabPane: View {
       WebTabViewRepresentable(session: session)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    .onAppear { addressText = displayString(session.currentURLString) }
+    .onAppear {
+      addressText = displayString(session.currentURLString)
+      // A brand-new blank tab has nowhere useful to put the cursor but the
+      // address bar — jump straight there instead of making it a click away.
+      if session.currentURLString == "about:blank" {
+        addressFocused = true
+      }
+    }
     .onChange(of: session.currentURLString) { _, new in
       if !addressFocused { addressText = displayString(new) }
     }

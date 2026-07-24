@@ -61,11 +61,11 @@ final class WorktreeTabsStore {
         let (org, project) = WorkItemLink.resolveOrgProject(clone: clone)
         if let org {
           let url = WorkItemLink.url(org: org, project: project, id: workItemID)
-          tabs.append(makeWebTab(title: "Work Item", systemImage: "checklist", urlString: url))
+          tabs.append(makeWebTab(title: "Work Item", systemImage: "checklist", urlString: url, worktree: worktree))
         }
       }
       if let figma = config.figmaURL, !figma.isEmpty {
-        tabs.append(makeWebTab(title: "Figma", systemImage: "paintbrush.pointed", urlString: figma))
+        tabs.append(makeWebTab(title: "Figma", systemImage: "paintbrush.pointed", urlString: figma, worktree: worktree))
       }
     }
 
@@ -88,9 +88,12 @@ final class WorktreeTabsStore {
     return tab
   }
 
+  /// `urlString` defaults to a blank tab (the "+" menu's "New Web Tab") but is
+  /// also how a right-click "Open in New Tab" on a page's link lands here.
   @discardableResult
-  func addWebTab(for worktree: WorktreeInfo) -> MainTab {
-    let tab = makeWebTab(title: "New Tab", systemImage: "globe", urlString: "about:blank")
+  func addWebTab(for worktree: WorktreeInfo, urlString: String = "about:blank",
+                 title: String = "New Tab", systemImage: String = "globe") -> MainTab {
+    let tab = makeWebTab(title: title, systemImage: systemImage, urlString: urlString, worktree: worktree)
     tabsByWorktree[worktree.path, default: []].append(tab)
     selection[worktree.path] = tab.id
     persist()
@@ -108,7 +111,7 @@ final class WorktreeTabsStore {
       persist()
       return existing
     }
-    let tab = makeWebTab(title: title, systemImage: systemImage, urlString: urlString)
+    let tab = makeWebTab(title: title, systemImage: systemImage, urlString: urlString, worktree: worktree)
     tabsByWorktree[worktree.path, default: []].append(tab)
     selection[worktree.path] = tab.id
     persist()
@@ -141,9 +144,12 @@ final class WorktreeTabsStore {
     return MainTab(kind: .terminal, title: title, systemImage: "terminal", terminalSession: session)
   }
 
-  private func makeWebTab(title: String, systemImage: String, urlString: String) -> MainTab {
+  private func makeWebTab(title: String, systemImage: String, urlString: String, worktree: WorktreeInfo) -> MainTab {
     let session = WebTabSession(urlString: urlString)
     session.onNavigate = { [weak self] in self?.persist() }
+    session.onOpenInNewTab = { [weak self] linkURL in
+      self?.addWebTab(for: worktree, urlString: linkURL)
+    }
     return MainTab(kind: .web, title: title, systemImage: systemImage, webSession: session)
   }
 
@@ -153,7 +159,7 @@ final class WorktreeTabsStore {
       return makeTerminalTab(for: worktree, title: saved.title)
     case .web:
       return makeWebTab(title: saved.title, systemImage: saved.systemImage,
-                        urlString: saved.urlString ?? "about:blank")
+                        urlString: saved.urlString ?? "about:blank", worktree: worktree)
     }
   }
 

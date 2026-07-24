@@ -76,6 +76,17 @@ final class WorktreeTabsStore {
     persist()
   }
 
+  /// Cycles the selected tab forward/backward, wrapping around — driven by the
+  /// Ctrl+Tab / Ctrl+Shift+Tab shortcuts in `MainTabBarView`.
+  func selectAdjacent(offset: Int, for worktree: WorktreeInfo) {
+    let tabs = tabs(for: worktree)
+    guard !tabs.isEmpty else { return }
+    let currentIndex = selection[worktree.path].flatMap { id in tabs.firstIndex { $0.id == id } } ?? 0
+    let count = tabs.count
+    let newIndex = ((currentIndex + offset) % count + count) % count
+    select(tabs[newIndex].id, for: worktree)
+  }
+
   @discardableResult
   func addTerminalTab(for worktree: WorktreeInfo) -> MainTab {
     let tab = makeTerminalTab(for: worktree, title: "Terminal")

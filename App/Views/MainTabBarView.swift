@@ -39,6 +39,19 @@ struct MainTabBarView: View {
     .task(id: worktree.path) {
       tabsStore.ensureDefaultTabs(for: worktree)
     }
+    .background {
+      // Invisible buttons rather than a `.commands` menu item: those are
+      // app-wide and would cycle whichever worktree window last had focus,
+      // not necessarily this one. A hidden button's shortcut is scoped to
+      // this view's window like any other SwiftUI control.
+      Group {
+        Button("", action: { tabsStore.selectAdjacent(offset: 1, for: worktree) })
+          .keyboardShortcut(.tab, modifiers: .control)
+        Button("", action: { tabsStore.selectAdjacent(offset: -1, for: worktree) })
+          .keyboardShortcut(.tab, modifiers: [.control, .shift])
+      }
+      .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
+    }
   }
 
   private var tabBar: some View {

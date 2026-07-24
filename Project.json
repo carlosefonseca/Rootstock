@@ -3,8 +3,11 @@
     "Debug": "debug",
     "Release": "release"
   },
-  "name": "Project",
+  "name": "Rootstock",
   "options": {
+    "deploymentTarget": {
+      "macOS": "26.0"
+    },
     "groupSortPosition": "bottom",
     "transitivelyLinkDependencies": false
   },
@@ -13,14 +16,14 @@
   },
   "targets": {
     "Rootstock": {
-      "deploymentTarget": "26.0",
       "info": {
         "path": "App/Info.plist",
         "properties": {
-          "CFBundleDisplayName": "New Project",
+          "CFBundleDisplayName": "Rootstock",
           "CFBundleShortVersionString": "1.0",
           "CFBundleVersion": "1",
-          "ITSAppUsesNonExemptEncryption": false
+          "ITSAppUsesNonExemptEncryption": false,
+          "LSApplicationCategoryType": "public.app-category.developer-tools"
         }
       },
       "platform": "macOS",

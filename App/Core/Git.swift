@@ -143,6 +143,22 @@ enum Git {
     await ShellRunner.run("git fetch", in: directory)
   }
 
+  /// Local and `origin` remote branch short-names, for picking an existing branch.
+  static func branches(in directory: URL) async -> (local: [String], remote: [String]) {
+    async let localResult = ShellRunner.run(
+      "git for-each-ref --format='%(refname:short)' refs/heads", in: directory)
+    async let remoteResult = ShellRunner.run(
+      "git for-each-ref --format='%(refname:short)' refs/remotes/origin", in: directory)
+
+    func parse(_ result: ShellResult) -> [String] {
+      result.stdout
+        .split(separator: "\n")
+        .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'")) }
+        .filter { !$0.isEmpty && !$0.hasSuffix("/HEAD") }
+    }
+    return (parse(await localResult), parse(await remoteResult))
+  }
+
   static func lastFetch(in directory: URL) async -> Date? {
     let common = await commonDir(directory) ?? directory.appending(path: ".git").path
     let fetchHead = URL(fileURLWithPath: common).appending(path: "FETCH_HEAD")

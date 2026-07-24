@@ -39,15 +39,19 @@ actor AzureAuth {
   }
   private var azCache: CachedToken?
 
-  /// The credential to use for `org`. PAT wins when present; otherwise an `az` token.
+  /// The credential to use for `org`, honouring the per-org auth mode. In `.az`
+  /// mode the keychain is never read, so no keychain prompt appears.
   func token(forOrg org: String) async -> AzureToken? {
-    if let pat = Keychain.pat(org: org), !pat.isEmpty {
-      return .pat(pat)
+    switch AzureSettingsStore.authMode(org: org) {
+    case .az:
+      return await azToken().map(AzureToken.bearer)
+    case .pat:
+      if let pat = Keychain.pat(org: org), !pat.isEmpty { return .pat(pat) }
+      return nil
+    case .auto:
+      if let pat = Keychain.pat(org: org), !pat.isEmpty { return .pat(pat) }
+      return await azToken().map(AzureToken.bearer)
     }
-    if let bearer = await azToken() {
-      return .bearer(bearer)
-    }
-    return nil
   }
 
   /// True when the machine has an authenticated `az` session we can reuse.

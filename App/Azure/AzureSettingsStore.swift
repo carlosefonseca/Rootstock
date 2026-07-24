@@ -8,6 +8,32 @@ enum AzureSettingsStore {
   private static let defaultWorkItemOrgKey = "azure.defaultWorkItemOrg"
   private static let defaultWorkItemProjectKey = "azure.defaultWorkItemProject"
 
+  /// How Rootstock authenticates to an org.
+  enum AuthMode: String, CaseIterable, Identifiable {
+    case auto   // PAT if stored, otherwise az
+    case az     // az session only — never touches the keychain
+    case pat    // stored PAT only
+
+    var id: String { rawValue }
+    var label: String {
+      switch self {
+      case .auto: return "Automatic"
+      case .az: return "az (AAD)"
+      case .pat: return "PAT"
+      }
+    }
+  }
+
+  static func authMode(org: String) -> AuthMode {
+    guard let raw = UserDefaults.standard.string(forKey: "azure.authMode.\(org)"),
+          let mode = AuthMode(rawValue: raw) else { return .auto }
+    return mode
+  }
+
+  static func setAuthMode(_ mode: AuthMode, org: String) {
+    UserDefaults.standard.set(mode.rawValue, forKey: "azure.authMode.\(org)")
+  }
+
   static var manualOrgs: [String] {
     get { UserDefaults.standard.stringArray(forKey: manualOrgsKey) ?? [] }
     set { UserDefaults.standard.set(newValue, forKey: manualOrgsKey) }

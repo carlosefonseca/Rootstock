@@ -99,6 +99,7 @@ private struct OrgPATRow: View {
   @State private var hasStored = false
   @State private var testing = false
   @State private var testResult: TestOutcome?
+  @State private var authMode: AzureSettingsStore.AuthMode = .auto
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -114,23 +115,34 @@ private struct OrgPATRow: View {
           .foregroundStyle(hasStored ? .green : .secondary)
       }
 
-      HStack {
-        SecureField("Personal access token", text: $pat)
-          .textFieldStyle(.roundedBorder)
-        Button("Save") {
-          Keychain.setPAT(pat, org: org)
-          hasStored = true
-          pat = ""
-          testResult = nil
-        }
-        .disabled(pat.isEmpty)
-        if hasStored {
-          Button("Remove", role: .destructive) {
-            Keychain.delete(org: org)
-            hasStored = false
+      Picker("Authentication", selection: $authMode) {
+        ForEach(AzureSettingsStore.AuthMode.allCases) { Text($0.label).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      .onChange(of: authMode) { AzureSettingsStore.setAuthMode(authMode, org: org) }
+
+      if authMode != .az {
+        HStack {
+          SecureField("Personal access token", text: $pat)
+            .textFieldStyle(.roundedBorder)
+          Button("Save") {
+            Keychain.setPAT(pat, org: org)
+            hasStored = true
+            pat = ""
             testResult = nil
           }
+          .disabled(pat.isEmpty)
+          if hasStored {
+            Button("Remove", role: .destructive) {
+              Keychain.delete(org: org)
+              hasStored = false
+              testResult = nil
+            }
+          }
         }
+      } else {
+        Text("Uses your az session — no PAT or keychain access needed.")
+          .font(.caption).foregroundStyle(.secondary)
       }
 
       HStack(spacing: 8) {
@@ -149,7 +161,11 @@ private struct OrgPATRow: View {
       }
     }
     .padding(.vertical, 4)
-    .task(id: org) { hasStored = Keychain.pat(org: org) != nil }
+    .task(id: org) {
+      authMode = AzureSettingsStore.authMode(org: org)
+      // Only probe the keychain when a PAT could actually be used.
+      hasStored = authMode != .az && Keychain.pat(org: org) != nil
+    }
   }
 
   private func test() {

@@ -20,7 +20,7 @@ struct WorktreeInspector: View {
           }
         }
 
-        AzurePlaceholderCard()
+        AzureSection(worktree: worktree)
 
         if let branch = worktree.branch {
           CollapsibleCard(title: "Notes", systemImage: "note.text", stateKey: "notes") {
@@ -188,15 +188,3 @@ private struct StatCell: View {
   }
 }
 
-/// Placeholder for the Azure DevOps sections — a planned follow-up phase.
-private struct AzurePlaceholderCard: View {
-  var body: some View {
-    CollapsibleCard(title: "Azure DevOps", systemImage: "cloud", stateKey: "azure") {
-      Label("Pull request, pipeline, and work-item integration is coming in a later phase.",
-            systemImage: "hammer.circle")
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-  }
-}

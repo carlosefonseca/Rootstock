@@ -21,6 +21,8 @@ struct NewWorktreeView: View {
   @State private var parentDir: URL?
   @State private var creating = false
   @State private var error: String?
+  @State private var fetching = false
+  @State private var fetchError: String?
 
   enum WorkItemType: String, CaseIterable, Identifiable {
     case feature = "feature", bugfix = "bugfix", chore = "chore"
@@ -64,10 +66,20 @@ struct NewWorktreeView: View {
         }
 
         Section("Work item") {
-          TextField("Work item ID", text: $workItemID, prompt: Text("205552"))
+          HStack {
+            TextField("Work item ID", text: $workItemID, prompt: Text("205552"))
+            Button("Fetch", systemImage: "arrow.down.circle") { fetchWorkItem() }
+              .labelStyle(.iconOnly)
+              .disabled(workItemID.isEmpty || selectedClone == nil || fetching)
+            if fetching { ProgressView().controlSize(.small) }
+          }
           TextField("Title", text: $title, prompt: Text("Payment state refactor"))
           Picker("Type", selection: $type) {
             ForEach(WorkItemType.allCases) { Text($0.label).tag($0) }
+          }
+          if let fetchError {
+            Label(fetchError, systemImage: "exclamationmark.triangle")
+              .font(.caption).foregroundStyle(.orange)
           }
         }
 
@@ -115,6 +127,38 @@ struct NewWorktreeView: View {
 
   private var canCreate: Bool {
     selectedClone != nil && !effectiveBranch.hasSuffix("/") && !baseBranch.isEmpty && targetPath != nil
+  }
+
+  /// Looks the work item up in Azure DevOps and pre-fills title + type.
+  private func fetchWorkItem() {
+    guard let clone = selectedClone else { return }
+    let org = DcdpConfig.load(worktree: clone.rootURL)?.workItemOrg
+      ?? AzureRemote.parse(clone.remoteURL)?.org
+    guard let org else {
+      fetchError = "No Azure DevOps organization for this clone."
+      return
+    }
+    fetching = true
+    fetchError = nil
+    let id = workItemID
+    Task {
+      do {
+        let item = try await AzureService().workItem(org: org, id: id)
+        if let fetchedTitle = item.title { title = fetchedTitle }
+        if let fetchedType = item.type { type = mapType(fetchedType) }
+      } catch {
+        fetchError = error.localizedDescription
+      }
+      fetching = false
+    }
+  }
+
+  private func mapType(_ adoType: String) -> WorkItemType {
+    switch adoType.lowercased() {
+    case "user story", "feature": return .feature
+    case "bug": return .bugfix
+    default: return .chore
+    }
   }
 
   private func chooseParent() {

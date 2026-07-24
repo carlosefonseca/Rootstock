@@ -133,6 +133,7 @@ struct NewWorktreeView: View {
   private func fetchWorkItem() {
     guard let clone = selectedClone else { return }
     let org = DcdpConfig.load(worktree: clone.rootURL)?.workItemOrg
+      ?? AzureSettingsStore.defaultWorkItemOrg
       ?? AzureRemote.parse(clone.remoteURL)?.org
     guard let org else {
       fetchError = "No Azure DevOps organization for this clone."

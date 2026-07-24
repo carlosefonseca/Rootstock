@@ -66,7 +66,9 @@ struct AzureClient {
       struct User: Decodable { var providerDisplayName: String? }
     }
     do {
-      let data = try await get(ConnectionData.self, org: org, path: "_apis/connectionData")
+      // connectionData is a preview-only resource, so it needs an explicit preview version.
+      let data = try await get(ConnectionData.self, org: org, path: "_apis/connectionData",
+                               apiVersion: "7.0-preview.1")
       let name = data.authenticatedUser?.providerDisplayName ?? "connected"
       return .success(name)
     } catch let error as AzureError {

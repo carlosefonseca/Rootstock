@@ -30,7 +30,7 @@ struct AzureSection: View {
     let clone = workspace.clone(forWorktree: worktree)
     remote = AzureRemote.parse(clone?.remoteURL)
     let dcdp = clone.map { DcdpConfig.load(worktree: $0.rootURL) } ?? nil
-    workItemOrg = dcdp?.workItemOrg
+    workItemOrg = dcdp?.workItemOrg ?? AzureSettingsStore.defaultWorkItemOrg
     await model.load(worktree: worktree, remote: remote, workItemOrg: workItemOrg)
   }
 

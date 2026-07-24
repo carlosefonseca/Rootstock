@@ -14,6 +14,9 @@ private struct AzureSettingsView: View {
   @Environment(WorkspaceModel.self) private var workspace
   @State private var orgs: [String] = []
   @State private var azAvailable: Bool?
+  @State private var newOrg = ""
+  @AppStorage("azure.defaultWorkItemOrg") private var defaultWorkItemOrg = ""
+  @AppStorage("azure.defaultWorkItemProject") private var defaultWorkItemProject = ""
 
   var body: some View {
     Form {
@@ -31,13 +34,27 @@ private struct AzureSettingsView: View {
 
       Section("Organizations") {
         if orgs.isEmpty {
-          Text("Track a clone to discover its Azure DevOps organization.")
+          Text("Track a clone to discover its Azure DevOps organization, or add one below.")
             .font(.callout).foregroundStyle(.secondary)
         } else {
           ForEach(orgs, id: \.self) { org in
-            OrgPATRow(org: org)
+            OrgPATRow(org: org, isManual: AzureSettingsStore.manualOrgs.contains(org),
+                      onRemoveOrg: { removeOrg(org) })
           }
         }
+        HStack {
+          TextField("Add organization (e.g. CASDevOps)", text: $newOrg)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit(addOrg)
+          Button("Add") { addOrg() }.disabled(newOrg.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+      }
+
+      Section("Work items") {
+        TextField("Default work-item org", text: $defaultWorkItemOrg, prompt: Text("CASDevOps"))
+        TextField("Default work-item project", text: $defaultWorkItemProject, prompt: Text("CA Entrega"))
+        Text("Used for work-item lookups when a repo's .dcdp/config.toml doesn't set WORKITEM_ORG. Work items often live in a different org than code.")
+          .font(.caption).foregroundStyle(.secondary)
       }
     }
     .formStyle(.grouped)
@@ -47,18 +64,34 @@ private struct AzureSettingsView: View {
     }
   }
 
+  private func addOrg() {
+    AzureSettingsStore.addManualOrg(newOrg)
+    newOrg = ""
+    orgs = discoverOrgs()
+  }
+
+  private func removeOrg(_ org: String) {
+    AzureSettingsStore.removeManualOrg(org)
+    Keychain.delete(org: org)
+    orgs = discoverOrgs()
+  }
+
   private func discoverOrgs() -> [String] {
     var set = Set<String>()
     for clone in workspace.clones {
       if let remote = AzureRemote.parse(clone.remoteURL) { set.insert(remote.org) }
       if let org = DcdpConfig.load(worktree: clone.rootURL)?.workItemOrg { set.insert(org) }
     }
+    if let org = AzureSettingsStore.defaultWorkItemOrg { set.insert(org) }
+    set.formUnion(AzureSettingsStore.manualOrgs)
     return set.sorted()
   }
 }
 
 private struct OrgPATRow: View {
   var org: String
+  var isManual: Bool
+  var onRemoveOrg: () -> Void
 
   enum TestOutcome { case success(String), failure(String) }
 
@@ -72,6 +105,10 @@ private struct OrgPATRow: View {
       HStack {
         Text(org).font(.headline)
         Spacer()
+        if isManual {
+          Button("Remove organization", systemImage: "trash") { onRemoveOrg() }
+            .labelStyle(.iconOnly).buttonStyle(.borderless).controlSize(.small)
+        }
         Text(hasStored ? "PAT stored" : "az / none")
           .font(.caption)
           .foregroundStyle(hasStored ? .green : .secondary)

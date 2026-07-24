@@ -59,36 +59,21 @@ struct AzureService {
   }
 }
 
-/// Resolves a work item id for a branch, in the plan's order.
+/// Finds a work-item link mentioned in a PR description that isn't already in
+/// the branch's configured list — the same trick the team's Ruby script uses
+/// to relate a PR to a work item, offered here as a one-click "Confirm"
+/// suggestion rather than auto-added (the URL might be wrong, or point to a
+/// related-but-different item).
 enum WorkItemResolver {
-  struct Resolution {
-    var id: String
-    var guessed: Bool
-  }
+  private static let urlRegex = try! NSRegularExpression(
+    pattern: #"https://dev\.azure\.com/\S+?/_workitems/edit/\d+"#)
 
-  private static let urlRegex = try! NSRegularExpression(pattern: #"_workitems/edit/(\d+)"#)
-  private static let branchRegex = try! NSRegularExpression(pattern: #"(\d{4,7})"#)
-
-  static func resolve(config: BranchConfig, branch: String, prDescription: String?) -> Resolution? {
-    // 1. Already recorded in the shared conf.
-    if let id = config.workItemID, !id.isEmpty {
-      return Resolution(id: id, guessed: false)
-    }
-    // 2. A work-item URL inside the PR description (the Ruby script's trick).
-    if let description = prDescription, let id = firstMatch(urlRegex, in: description) {
-      return Resolution(id: id, guessed: false)
-    }
-    // 3. A leading numeric token in the branch name — a labelled guess.
-    if let id = firstMatch(branchRegex, in: branch) {
-      return Resolution(id: id, guessed: true)
-    }
-    return nil
-  }
-
-  private static func firstMatch(_ regex: NSRegularExpression, in text: String) -> String? {
-    let range = NSRange(text.startIndex..., in: text)
-    guard let match = regex.firstMatch(in: text, range: range),
-          let group = Range(match.range(at: 1), in: text) else { return nil }
-    return String(text[group])
+  static func detect(in prDescription: String?, excluding configured: [WorkItemURL]) -> WorkItemURL? {
+    guard let prDescription else { return nil }
+    let range = NSRange(prDescription.startIndex..., in: prDescription)
+    guard let match = urlRegex.firstMatch(in: prDescription, range: range),
+          let r = Range(match.range, in: prDescription),
+          let detected = WorkItemURL.parse(String(prDescription[r])) else { return nil }
+    return configured.contains(detected) ? nil : detected
   }
 }

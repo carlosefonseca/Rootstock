@@ -39,9 +39,7 @@ struct AzureSection: View {
     guard !Task.isCancelled else { return }
     let clone = workspace.clone(forWorktree: worktree)
     let resolvedRemote = AzureRemote.parse(clone?.remoteURL)
-    let (resolvedOrg, resolvedProject) = WorkItemLink.resolveOrgProject(clone: clone)
-    await model.load(worktree: worktree, remote: resolvedRemote,
-                     workItemOrg: resolvedOrg, workItemProject: resolvedProject)
+    await model.load(worktree: worktree, remote: resolvedRemote)
 
     if let pr = model.pr, let remote = model.remote {
       linksStore.setPullRequestURL(remote.pullRequestURL(id: pr.pullRequestId), for: worktree)
@@ -72,14 +70,19 @@ struct AzureSection: View {
   @ViewBuilder private var loadedContent: some View {
     PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipeline: model.pipeline, remote: model.remote,
                     branch: worktree.branch, worktree: worktree, tabsStore: tabsStore)
-    if model.workItemID != nil {
+    if !model.workItems.isEmpty || model.detectedWorkItem != nil {
       Divider()
-      WorkItemCard(item: model.workItem, id: model.workItemID, guessed: model.workItemGuessed,
-                   workItemOrg: model.workItemOrg ?? model.remote?.org, workItemProject: model.workItemProject,
-                   worktree: worktree, tabsStore: tabsStore,
-                   onConfirm: {
-                     if let branch = worktree.branch { model.confirmWorkItem(worktree: worktree, branch: branch) }
-                   })
+      VStack(alignment: .leading, spacing: 10) {
+        Label("Work Items", systemImage: "checklist").font(.subheadline.weight(.medium))
+        ForEach(model.workItems) { entry in
+          WorkItemCard(entry: entry, worktree: worktree, tabsStore: tabsStore)
+        }
+        if let detected = model.detectedWorkItem {
+          DetectedWorkItemRow(url: detected) {
+            if let branch = worktree.branch { model.confirmDetectedWorkItem(worktree: worktree, branch: branch) }
+          }
+        }
+      }
     }
   }
 }
@@ -265,50 +268,44 @@ private struct PipelinePill: View {
 // MARK: Work item
 
 private struct WorkItemCard: View {
-  var item: ADOWorkItem?
-  var id: String?
-  var guessed: Bool
-  var workItemOrg: String?
-  var workItemProject: String?
+  var entry: WorktreeAzureModel.WorkItemEntry
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        if let item = entry.detail {
+          HStack(spacing: 6) {
+            if let type = item.type { StatusPill(text: type, tint: .purple) }
+            if let state = item.state { StatusPill(text: state, tint: .blue) }
+            Text("#\(entry.url.id)").font(.caption.monospaced()).foregroundStyle(.secondary)
+          }
+        } else {
+          Text("#\(entry.url.id)").font(.callout.monospaced()).foregroundStyle(.secondary)
+        }
+        Spacer()
+        Button("Open", systemImage: "arrow.up.right.square") {
+          WebLinkOpener.open(entry.url.canonical, title: "Work Item #\(entry.url.id)",
+                             systemImage: "checklist", worktree: worktree, tabsStore: tabsStore)
+        }
+        .controlSize(.small).labelStyle(.iconOnly)
+      }
+      if let title = entry.detail?.title { Text(title).font(.callout).lineLimit(2) }
+    }
+  }
+}
+
+private struct DetectedWorkItemRow: View {
+  var url: WorkItemURL
   var onConfirm: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Label("Work Item", systemImage: "checklist").font(.subheadline.weight(.medium))
-        Spacer()
-        if let id {
-          Button("Open", systemImage: "arrow.up.right.square") {
-            if let org = workItemOrg {
-              WebLinkOpener.open(WorkItemLink.url(org: org, project: workItemProject, id: id), title: "Work Item",
-                                 systemImage: "checklist", worktree: worktree, tabsStore: tabsStore)
-            }
-          }
-          .controlSize(.small).labelStyle(.iconOnly)
-          .disabled(workItemOrg == nil)
-        }
-      }
-
-      if let item {
-        HStack(spacing: 6) {
-          if let type = item.type { StatusPill(text: type, tint: .purple) }
-          if let state = item.state { StatusPill(text: state, tint: .blue) }
-          Text("#\(String(item.id))").font(.caption.monospaced()).foregroundStyle(.secondary)
-        }
-        if let title = item.title { Text(title).font(.callout).lineLimit(2) }
-      } else if let id {
-        Text("#\(id)").font(.callout.monospaced()).foregroundStyle(.secondary)
-      }
-
-      if guessed {
-        HStack(spacing: 8) {
-          Label("Guessed from branch name", systemImage: "questionmark.circle")
-            .font(.caption).foregroundStyle(.orange)
-          Button("Confirm") { onConfirm() }.controlSize(.mini)
-        }
-      }
+    HStack(spacing: 8) {
+      Label("Found #\(url.id) in the PR description", systemImage: "questionmark.circle")
+        .font(.caption).foregroundStyle(.orange)
+      Spacer()
+      Button("Add") { onConfirm() }.controlSize(.mini)
     }
   }
 }

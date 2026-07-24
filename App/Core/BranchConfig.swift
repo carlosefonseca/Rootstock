@@ -17,7 +17,7 @@ struct BranchConfig {
   var dsBranch: String?    // DS_BRANCH
   var dsDep: String?       // DS_DEP
   // New Rootstock keys (shared).
-  var workItemID: String?  // WORK_ITEM_ID
+  var workItemURLs: [String] = []  // WORK_ITEM_URLS — comma-separated full URLs
   var figmaURL: String?    // FIGMA_URL
   var slackChannelURL: String? // SLACK_CHANNEL_URL
 
@@ -27,7 +27,7 @@ struct BranchConfig {
   private var passthrough: [String] = []
 
   private static let known = ["PRJ_DEP", "DS_BRANCH", "DS_DEP",
-                              "WORK_ITEM_ID", "FIGMA_URL", "SLACK_CHANNEL_URL"]
+                              "WORK_ITEM_URLS", "FIGMA_URL", "SLACK_CHANNEL_URL"]
 
   static func fileName(forBranch branch: String) -> String {
     branch.replacingOccurrences(of: "/", with: "__") + ".conf"
@@ -70,7 +70,10 @@ struct BranchConfig {
       case "PRJ_DEP": config.prjDep = value
       case "DS_BRANCH": config.dsBranch = value
       case "DS_DEP": config.dsDep = value
-      case "WORK_ITEM_ID": config.workItemID = value
+      case "WORK_ITEM_URLS":
+        config.workItemURLs = value.split(separator: ",")
+          .map { $0.trimmingCharacters(in: .whitespaces) }
+          .filter { !$0.isEmpty }
       case "FIGMA_URL": config.figmaURL = value
       case "SLACK_CHANNEL_URL": config.slackChannelURL = value
       default: break
@@ -93,7 +96,7 @@ struct BranchConfig {
     emit("PRJ_DEP", prjDep)
     emit("DS_BRANCH", dsBranch)
     emit("DS_DEP", dsDep)
-    emit("WORK_ITEM_ID", workItemID)
+    if !workItemURLs.isEmpty { lines.append("WORK_ITEM_URLS=\"\(workItemURLs.joined(separator: ","))\"") }
     emit("FIGMA_URL", figmaURL)
     emit("SLACK_CHANNEL_URL", slackChannelURL)
     lines.append(contentsOf: passthrough)
@@ -115,13 +118,11 @@ struct BranchConfig {
 /// of the clone (read from the clone's main worktree, not whichever branch is
 /// currently checked out), unlike the per-branch `branch-sync` conf.
 struct DcdpConfig {
-  var workItemOrg: String?
-  var workItemProject: String?
   var branchConfigDir: String?
 
   /// Lines this type doesn't recognise, preserved verbatim on save.
   private var passthrough: [String] = []
-  private static let known = ["WORKITEM_ORG", "WORKITEM_PROJECT", "BRANCH_CONFIG_DIR"]
+  private static let known = ["BRANCH_CONFIG_DIR"]
 
   static func fileURL(worktree: URL) -> URL {
     worktree.appending(path: ".dcdp/config.toml")
@@ -144,8 +145,6 @@ struct DcdpConfig {
       }
       let value = unquote(String(trimmed[trimmed.index(after: eq)...]))
       switch key {
-      case "WORKITEM_ORG": config.workItemOrg = value
-      case "WORKITEM_PROJECT": config.workItemProject = value
       case "BRANCH_CONFIG_DIR": config.branchConfigDir = value
       default: break
       }
@@ -164,8 +163,6 @@ struct DcdpConfig {
       guard let value, !value.isEmpty else { return }
       lines.append("\(key) = \"\(value)\"")
     }
-    emit("WORKITEM_ORG", workItemOrg)
-    emit("WORKITEM_PROJECT", workItemProject)
     emit("BRANCH_CONFIG_DIR", branchConfigDir)
     lines.append(contentsOf: passthrough)
 

@@ -2,12 +2,12 @@ import Foundation
 import Observation
 
 /// Loads and holds the Azure DevOps picture for one worktree: its PR, pipeline
-/// status, and work item. Created per worktree by `AzureSection`.
+/// status, and work items. Created per worktree by `AzureSection`.
 @Observable
 @MainActor
 final class WorktreeAzureModel {
   enum Phase: Equatable {
-    case notConfigured        // remote isn't an ADO repo
+    case notConfigured        // remote isn't an ADO repo, and no work items configured
     case idle                 // configured, not loaded yet
     case loading
     case loaded
@@ -21,36 +21,40 @@ final class WorktreeAzureModel {
     var label: String? = nil
   }
 
+  /// One configured work item, with its fetched detail once available. `detail`
+  /// stays nil (not an error state) while the fetch is in flight or if it fails
+  /// — the id/org/project from the URL are enough to show something useful.
+  struct WorkItemEntry: Identifiable {
+    var url: WorkItemURL
+    var detail: ADOWorkItem?
+    var id: String { url.canonical }
+  }
+
   private(set) var phase: Phase = .idle
   private(set) var pr: ADOPullRequest?
   private(set) var unresolved = 0
   private(set) var pipeline = Pipeline(state: .none, url: nil)
-  private(set) var workItem: ADOWorkItem?
-  private(set) var workItemID: String?
-  private(set) var workItemGuessed = false
+  private(set) var workItems: [WorkItemEntry] = []
+  /// A work-item link found in the PR description that isn't in the configured
+  /// list yet — offered as a "Confirm" suggestion, never added automatically.
+  private(set) var detectedWorkItem: WorkItemURL?
 
-  // The resolved context for the current load, held here (not as separate @State
-  // on AzureSection) so it's part of the same Observable graph as `phase` and
-  // updates in the same transaction — the view was seeing these desync from
-  // `phase`/`workItemID` when they lived on split @State/@Observable storage.
+  // Held here (not as separate @State on AzureSection) so it's part of the same
+  // Observable graph as `phase` and updates in the same transaction — the view
+  // was seeing these desync from `phase` when they lived on split @State/
+  // @Observable storage.
   private(set) var remote: AzureRemote?
-  private(set) var workItemOrg: String?
-  private(set) var workItemProject: String?
 
   private let service = AzureService()
 
-  /// Loads everything for `worktree`. `remote` is parsed from the clone's origin;
-  /// `workItemOrg`/`workItemProject` come from `.dcdp/config.toml` or the user's
-  /// defaults (falling back to the code org).
-  ///
-  /// Work-item resolution runs independently of the PR/pipeline fetch: the work
-  /// item can live in a different org than the code (see the two-org setup), so a
-  /// `WORK_ITEM_ID` already recorded in the branch's shared conf should fetch its
-  /// details even when the code remote doesn't resolve or the PR call fails.
-  func load(worktree: WorktreeInfo, remote: AzureRemote?, workItemOrg: String?, workItemProject: String?) async {
+  /// Loads everything for `worktree`. `remote` is parsed from the clone's
+  /// origin. Work items are entirely self-describing via their URLs (org,
+  /// project, and id all come from the URL itself), so unlike the PR/pipeline
+  /// fetch, resolving them doesn't depend on `remote` being set at all — a
+  /// repo that isn't recognized as an Azure DevOps code remote can still list
+  /// and fetch work items configured for the branch.
+  func load(worktree: WorktreeInfo, remote: AzureRemote?) async {
     self.remote = remote
-    self.workItemOrg = workItemOrg
-    self.workItemProject = workItemProject
     guard let branch = worktree.branch else {
       phase = .notConfigured
       return
@@ -83,52 +87,49 @@ final class WorktreeAzureModel {
       self.pipeline = Pipeline(state: .none, url: nil)
     }
 
-    await resolveWorkItem(worktree: worktree, branch: branch, remote: remote,
-                          workItemOrg: workItemOrg, workItemProject: workItemProject,
-                          prDescription: pr?.description)
+    await resolveWorkItems(worktree: worktree, branch: branch, prDescription: pr?.description)
 
-    if remote == nil && workItemID == nil {
+    if remote == nil && workItems.isEmpty && detectedWorkItem == nil {
       phase = .notConfigured
-    } else if let prFailure, workItemID == nil {
+    } else if let prFailure, workItems.isEmpty {
       phase = .failed(prFailure.localizedDescription)
     } else {
       phase = .loaded
     }
   }
 
-  /// Writes the resolved id into the shared conf, promoting a guess to confirmed.
-  func confirmWorkItem(worktree: WorktreeInfo, branch: String) {
-    guard let id = workItemID else { return }
+  /// Adds the detected suggestion to the branch's shared config and re-fetches.
+  func confirmDetectedWorkItem(worktree: WorktreeInfo, branch: String) {
+    guard let detected = detectedWorkItem else { return }
     var config = BranchConfig.load(worktree: worktree.url, branch: branch)
-    config.workItemID = id
-    try? config.save(worktree: worktree.url, branch: branch)
-    workItemGuessed = false
+    if !config.workItemURLs.contains(detected.canonical) {
+      config.workItemURLs.append(detected.canonical)
+      try? config.save(worktree: worktree.url, branch: branch)
+    }
+    detectedWorkItem = nil
+    NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
 
-  private func resolveWorkItem(worktree: WorktreeInfo, branch: String, remote: AzureRemote?,
-                               workItemOrg: String?, workItemProject: String?, prDescription: String?) async {
+  private func resolveWorkItems(worktree: WorktreeInfo, branch: String, prDescription: String?) async {
     let config = BranchConfig.load(worktree: worktree.url, branch: branch)
-    guard let resolution = WorkItemResolver.resolve(
-      config: config, branch: branch, prDescription: prDescription) else {
-      workItem = nil; workItemID = nil; workItemGuessed = false
-      return
-    }
-    workItemID = resolution.id
-    workItemGuessed = resolution.guessed
+    let configured = config.workItemURLs.compactMap { WorkItemURL.parse($0) }
+    for wiURL in configured { AzureSettingsStore.addManualOrg(wiURL.org) }
 
-    // A confident (non-guessed) resolution from the PR description is written back
-    // so detection runs at most once per branch.
-    if !resolution.guessed, config.workItemID == nil {
-      var updated = config
-      updated.workItemID = resolution.id
-      try? updated.save(worktree: worktree.url, branch: branch)
+    workItems = await withTaskGroup(of: WorkItemEntry.self) { group in
+      for wiURL in configured {
+        group.addTask {
+          let detail = try? await self.service.workItem(org: wiURL.org, project: wiURL.project, id: wiURL.id)
+          return WorkItemEntry(url: wiURL, detail: detail)
+        }
+      }
+      var results: [WorkItemEntry] = []
+      for await entry in group { results.append(entry) }
+      return results
     }
+    // withTaskGroup doesn't preserve submission order.
+    workItems.sort { configured.firstIndex(of: $0.url) ?? 0 < configured.firstIndex(of: $1.url) ?? 0 }
 
-    guard let org = workItemOrg ?? remote?.org else {
-      workItem = nil
-      return
-    }
-    workItem = try? await service.workItem(org: org, project: workItemProject, id: resolution.id)
+    detectedWorkItem = WorkItemResolver.detect(in: prDescription, excluding: configured)
   }
 
   /// The latest pipeline build for the branch — always carries a working link

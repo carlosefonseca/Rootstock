@@ -9,31 +9,18 @@ struct SharedConfigEditor: View {
   var branch: String
 
   @State private var baseBranch = ""
-  @State private var workItemID = ""
+  @State private var workItemURLs: [String] = []
   @State private var figmaURL = ""
   @State private var slackURL = ""
   @State private var loaded = BranchConfig()
 
-  @State private var workItemOrg = ""
-  @State private var workItemProject = ""
-  @State private var loadedDcdp = DcdpConfig()
-
   @State private var saveError: String?
-
-  private var repoRootURL: URL {
-    workspace.clone(forWorktree: worktree)?.rootURL ?? worktree.url
-  }
 
   private var isBranchDirty: Bool {
     baseBranch != (loaded.prjDep ?? "") ||
-    workItemID != (loaded.workItemID ?? "") ||
+    workItemURLs.filter({ !$0.isEmpty }) != loaded.workItemURLs ||
     figmaURL != (loaded.figmaURL ?? "") ||
     slackURL != (loaded.slackChannelURL ?? "")
-  }
-
-  private var isRepoDirty: Bool {
-    workItemOrg != (loadedDcdp.workItemOrg ?? "") ||
-    workItemProject != (loadedDcdp.workItemProject ?? "")
   }
 
   var body: some View {
@@ -46,7 +33,14 @@ struct SharedConfigEditor: View {
       Form {
         Section("Branch — \(branch)") {
           Field(title: "Base branch (PRJ_DEP)", text: $baseBranch, prompt: "develop")
-          Field(title: "Work item ID", text: $workItemID, prompt: "205552")
+        }
+        Section {
+          WorkItemURLListEditor(urls: $workItemURLs)
+        } header: {
+          Text("Work items")
+        } footer: {
+          Text("Paste full Azure DevOps work item URLs — org and project come from the link itself.")
+            .font(.caption2)
         }
         Section("Links") {
           LinkField(title: "Figma", text: $figmaURL, prompt: "https://figma.com/…") {
@@ -55,17 +49,6 @@ struct SharedConfigEditor: View {
           LinkField(title: "Slack channel", text: $slackURL, prompt: "https://…slack.com/archives/…") {
             AppOpener.openSlack(slackURL)
           }
-        }
-        Section {
-          Field(title: "Work-item org (WORKITEM_ORG)", text: $workItemOrg,
-                prompt: "e.g. your-org-name")
-          Field(title: "Work-item project (WORKITEM_PROJECT)", text: $workItemProject,
-                prompt: "e.g. Your Project")
-        } header: {
-          Text("Repository — every branch")
-        } footer: {
-          Text("Saved to .dcdp/config.toml at the repo root. Overrides the default set in Settings, for repos whose work items live in a different org/project.")
-            .font(.caption2)
         }
         if let saveError {
           Label(saveError, systemImage: "exclamationmark.triangle")
@@ -82,7 +65,7 @@ struct SharedConfigEditor: View {
         Button("Cancel") { dismiss() }
         Button("Save") { save() }
           .keyboardShortcut(.defaultAction)
-          .disabled(!isBranchDirty && !isRepoDirty)
+          .disabled(!isBranchDirty)
       }
       .padding(16)
     }
@@ -93,36 +76,44 @@ struct SharedConfigEditor: View {
   private func load() {
     loaded = BranchConfig.load(worktree: worktree.url, branch: branch)
     baseBranch = loaded.prjDep ?? ""
-    workItemID = loaded.workItemID ?? ""
+    workItemURLs = loaded.workItemURLs
     figmaURL = loaded.figmaURL ?? ""
     slackURL = loaded.slackChannelURL ?? ""
-
-    loadedDcdp = DcdpConfig.load(worktree: repoRootURL) ?? DcdpConfig()
-    workItemOrg = loadedDcdp.workItemOrg ?? ""
-    workItemProject = loadedDcdp.workItemProject ?? ""
   }
 
   private func save() {
     do {
-      if isBranchDirty {
-        var config = BranchConfig.load(worktree: worktree.url, branch: branch) // keep passthrough lines
-        config.prjDep = baseBranch.isEmpty ? nil : baseBranch
-        config.workItemID = workItemID.isEmpty ? nil : workItemID
-        config.figmaURL = figmaURL.isEmpty ? nil : figmaURL
-        config.slackChannelURL = slackURL.isEmpty ? nil : slackURL
-        try config.save(worktree: worktree.url, branch: branch)
-        Task { await workspace.reloadStatus(for: worktree) } // base branch may have changed
-      }
-      if isRepoDirty {
-        var dcdp = DcdpConfig.load(worktree: repoRootURL) ?? DcdpConfig() // keep passthrough lines
-        dcdp.workItemOrg = workItemOrg.isEmpty ? nil : workItemOrg
-        dcdp.workItemProject = workItemProject.isEmpty ? nil : workItemProject
-        try dcdp.save(worktree: repoRootURL)
-      }
+      var config = BranchConfig.load(worktree: worktree.url, branch: branch) // keep passthrough lines
+      config.prjDep = baseBranch.isEmpty ? nil : baseBranch
+      config.workItemURLs = workItemURLs.filter { !$0.isEmpty }
+      config.figmaURL = figmaURL.isEmpty ? nil : figmaURL
+      config.slackChannelURL = slackURL.isEmpty ? nil : slackURL
+      try config.save(worktree: worktree.url, branch: branch)
+      Task { await workspace.reloadStatus(for: worktree) } // base branch may have changed
       NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
       dismiss()
     } catch {
       saveError = error.localizedDescription
+    }
+  }
+}
+
+private struct WorkItemURLListEditor: View {
+  @Binding var urls: [String]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      ForEach(urls.indices, id: \.self) { index in
+        HStack {
+          TextField("Work item URL", text: $urls[index],
+                     prompt: Text("https://dev.azure.com/org/project/_workitems/edit/12345"))
+            .labelsHidden()
+          Button("Remove", systemImage: "minus.circle") { urls.remove(at: index) }
+            .labelStyle(.iconOnly).foregroundStyle(.secondary)
+        }
+      }
+      Button("Add Work Item", systemImage: "plus.circle") { urls.append("") }
+        .labelStyle(.titleAndIcon)
     }
   }
 }

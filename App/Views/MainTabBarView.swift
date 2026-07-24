@@ -4,7 +4,6 @@ import SwiftUI
 /// tabs the user opens) above whichever tab is selected. Tabs are per-worktree
 /// and persist across worktree switches — see `WorktreeTabsStore`.
 struct MainTabBarView: View {
-  @Environment(WorkspaceModel.self) private var workspace
   @Environment(WorktreeTabsStore.self) private var tabsStore
   @Environment(WorktreeLinksStore.self) private var linksStore
   var worktree: WorktreeInfo
@@ -20,18 +19,14 @@ struct MainTabBarView: View {
     return BranchConfig.load(worktree: worktree.url, branch: branch)
   }
 
-  /// Only resolvable without a network round-trip when the work item id is
-  /// already recorded in the shared config — a guessed-but-unconfirmed id
-  /// isn't reliable enough to offer as a one-click link.
-  private var workItemURL: String? {
-    guard let id = branchConfig?.workItemID, !id.isEmpty else { return nil }
-    let (org, project) = WorkItemLink.resolveOrgProject(clone: workspace.clone(forWorktree: worktree))
-    guard let org else { return nil }
-    return WorkItemLink.url(org: org, project: project, id: id)
+  /// Work items are self-describing URLs, so listing them for the quick-link
+  /// menu needs no org/project resolution — just parsing what's configured.
+  private var workItemURLs: [WorkItemURL] {
+    (branchConfig?.workItemURLs ?? []).compactMap { WorkItemURL.parse($0) }
   }
 
   private var hasAnyQuickLink: Bool {
-    linksStore.pullRequestURL(for: worktree) != nil || workItemURL != nil ||
+    linksStore.pullRequestURL(for: worktree) != nil || !workItemURLs.isEmpty ||
     !(branchConfig?.figmaURL ?? "").isEmpty || !(branchConfig?.slackChannelURL ?? "").isEmpty
   }
 
@@ -42,7 +37,7 @@ struct MainTabBarView: View {
       content
     }
     .task(id: worktree.path) {
-      tabsStore.ensureDefaultTabs(for: worktree, clone: workspace.clone(forWorktree: worktree))
+      tabsStore.ensureDefaultTabs(for: worktree)
     }
   }
 
@@ -75,9 +70,9 @@ struct MainTabBarView: View {
                                  worktree: worktree, tabsStore: tabsStore)
             }
           }
-          if let workItemURL {
-            Button("Work Item", systemImage: "checklist") {
-              WebLinkOpener.open(workItemURL, title: "Work Item", systemImage: "checklist",
+          ForEach(workItemURLs, id: \.self) { wiURL in
+            Button("Work Item #\(wiURL.id)", systemImage: "checklist") {
+              WebLinkOpener.open(wiURL.canonical, title: "Work Item #\(wiURL.id)", systemImage: "checklist",
                                  worktree: worktree, tabsStore: tabsStore)
             }
           }

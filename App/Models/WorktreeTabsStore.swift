@@ -41,7 +41,7 @@ final class WorktreeTabsStore {
   /// otherwise builds the starting set: a terminal, plus a work-item tab and a
   /// Figma tab when the branch's shared config already has them set. Only ever
   /// runs once per worktree per launch.
-  func ensureDefaultTabs(for worktree: WorktreeInfo, clone: TrackedClone?) {
+  func ensureDefaultTabs(for worktree: WorktreeInfo) {
     guard tabsByWorktree[worktree.path] == nil else { return }
 
     if let saved = Self.loadPersisted()[worktree.path], !saved.tabs.isEmpty {
@@ -57,12 +57,9 @@ final class WorktreeTabsStore {
     if let branch = worktree.branch {
       let config = BranchConfig.load(worktree: worktree.url, branch: branch)
 
-      if let workItemID = config.workItemID, !workItemID.isEmpty {
-        let (org, project) = WorkItemLink.resolveOrgProject(clone: clone)
-        if let org {
-          let url = WorkItemLink.url(org: org, project: project, id: workItemID)
-          tabs.append(makeWebTab(title: "Work Item", systemImage: "checklist", urlString: url, worktree: worktree))
-        }
+      for wiURL in config.workItemURLs.compactMap({ WorkItemURL.parse($0) }) {
+        tabs.append(makeWebTab(title: "Work Item #\(wiURL.id)", systemImage: "checklist",
+                               urlString: wiURL.canonical, worktree: worktree))
       }
       if let figma = config.figmaURL, !figma.isEmpty {
         tabs.append(makeWebTab(title: "Figma", systemImage: "paintbrush.pointed", urlString: figma, worktree: worktree))

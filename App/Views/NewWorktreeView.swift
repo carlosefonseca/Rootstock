@@ -21,7 +21,7 @@ struct NewWorktreeView: View {
 
   @State private var source: Source = .newBranch
   @State private var selectedCloneID: String?
-  @State private var workItemID = ""
+  @State private var workItemURLText = ""
   @State private var title = ""
   @State private var type: WorkItemType = .feature
   @State private var branchEdited = false
@@ -50,12 +50,14 @@ struct NewWorktreeView: View {
     isRemoteSelection ? String(existingBranch.dropFirst("origin/".count)) : existingBranch
   }
 
+  private var parsedWorkItem: WorkItemURL? { WorkItemURL.parse(workItemURLText) }
+
   private var derivedBranch: String {
     let slug = title
       .lowercased()
       .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
       .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-    let idPart = workItemID.isEmpty ? "" : "\(workItemID)-"
+    let idPart = parsedWorkItem.map { "\($0.id)-" } ?? ""
     return "\(type.rawValue)/\(idPart)\(slug)"
   }
 
@@ -96,10 +98,11 @@ struct NewWorktreeView: View {
 
         Section("Work item") {
           HStack {
-            TextField("Work item ID", text: $workItemID, prompt: Text("205552"))
+            TextField("Work item URL", text: $workItemURLText,
+                       prompt: Text("https://dev.azure.com/org/project/_workitems/edit/205552"))
             Button("Fetch", systemImage: "arrow.down.circle") { fetchWorkItem() }
               .labelStyle(.iconOnly)
-              .disabled(workItemID.isEmpty || selectedClone == nil || fetching)
+              .disabled(parsedWorkItem == nil || fetching)
             if fetching { ProgressView().controlSize(.small) }
           }
           if source == .newBranch {
@@ -142,7 +145,6 @@ struct NewWorktreeView: View {
     .onAppear { if selectedCloneID == nil { selectedCloneID = workspace.clones.first?.commonDir } }
     .onChange(of: selectedCloneID) { reloadBranches() }
     .onChange(of: source) { reloadBranches() }
-    .onChange(of: existingBranch) { autofillWorkItemFromBranch() }
   }
 
   @ViewBuilder private var newBranchSection: some View {
@@ -208,39 +210,22 @@ struct NewWorktreeView: View {
     }
   }
 
-  /// Pre-fill the work item id from a leading numeric token in the branch name.
-  private func autofillWorkItemFromBranch() {
-    guard workItemID.isEmpty, !existingLocalName.isEmpty else { return }
-    if let match = existingLocalName.range(of: #"\d{4,7}"#, options: .regularExpression) {
-      workItemID = String(existingLocalName[match])
-    }
-  }
-
-  /// Looks the work item up in Azure DevOps and pre-fills title + type.
+  /// Looks the work item up in Azure DevOps and pre-fills title + type. The
+  /// org/project/id all come from the pasted URL — no separate lookup needed.
   private func fetchWorkItem() {
-    guard let clone = selectedClone else { return }
-    let dcdp = DcdpConfig.load(worktree: clone.rootURL)
-    let org = dcdp?.workItemOrg
-      ?? AzureSettingsStore.defaultWorkItemOrg
-      ?? AzureRemote.parse(clone.remoteURL)?.org
-    let project = dcdp?.workItemProject ?? AzureSettingsStore.defaultWorkItemProject
-    guard let org else {
-      fetchError = "No Azure DevOps organization for this clone."
-      return
-    }
+    guard let workItem = parsedWorkItem else { return }
     fetching = true
     fetchError = nil
-    let id = workItemID
     Task {
       do {
-        let item = try await AzureService().workItem(org: org, project: project, id: id)
+        let item = try await AzureService().workItem(org: workItem.org, project: workItem.project, id: workItem.id)
         fetchedTitle = item.title
         if source == .newBranch {
           if let fetchedTitle = item.title { title = fetchedTitle }
           if let fetchedType = item.type { type = mapType(fetchedType) }
         }
       } catch {
-        let scope = project.map { "\(org)/\($0)" } ?? org
+        let scope = workItem.project.map { "\(workItem.org)/\($0)" } ?? workItem.org
         fetchError = "\(error.localizedDescription) (queried \(scope))"
       }
       fetching = false
@@ -282,7 +267,7 @@ struct NewWorktreeView: View {
       if !baseBranch.isEmpty { config.prjDep = baseBranch }
       config.dsBranch = config.dsBranch ?? "na"
       config.dsDep = config.dsDep ?? "na"
-      if !workItemID.isEmpty { config.workItemID = workItemID }
+      if let parsedWorkItem { config.workItemURLs = [parsedWorkItem.canonical] }
       if !figmaURL.isEmpty { config.figmaURL = figmaURL }
       if !slackURL.isEmpty { config.slackChannelURL = slackURL }
       try? config.save(worktree: path, branch: branchName)

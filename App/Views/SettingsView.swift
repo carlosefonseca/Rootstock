@@ -108,8 +108,6 @@ private struct AzureSettingsView: View {
   @State private var orgs: [String] = []
   @State private var azAvailable: Bool?
   @State private var newOrg = ""
-  @AppStorage("azure.defaultWorkItemOrg") private var defaultWorkItemOrg = ""
-  @AppStorage("azure.defaultWorkItemProject") private var defaultWorkItemProject = ""
 
   var body: some View {
     Form {
@@ -142,13 +140,6 @@ private struct AzureSettingsView: View {
           Button("Add") { addOrg() }.disabled(newOrg.trimmingCharacters(in: .whitespaces).isEmpty)
         }
       }
-
-      Section("Work items") {
-        TextField("Default work-item org", text: $defaultWorkItemOrg, prompt: Text("e.g. your-org-name"))
-        TextField("Default work-item project", text: $defaultWorkItemProject, prompt: Text("e.g. Your Project"))
-        Text("Used for work-item lookups when a repo's .dcdp/config.toml doesn't set WORKITEM_ORG. Work items often live in a different org than code.")
-          .font(.caption).foregroundStyle(.secondary)
-      }
     }
     .formStyle(.grouped)
     .task {
@@ -173,9 +164,7 @@ private struct AzureSettingsView: View {
     var set = Set<String>()
     for clone in workspace.clones {
       if let remote = AzureRemote.parse(clone.remoteURL) { set.insert(remote.org) }
-      if let org = DcdpConfig.load(worktree: clone.rootURL)?.workItemOrg { set.insert(org) }
     }
-    if let org = AzureSettingsStore.defaultWorkItemOrg { set.insert(org) }
     set.formUnion(AzureSettingsStore.manualOrgs)
     return set.sorted()
   }

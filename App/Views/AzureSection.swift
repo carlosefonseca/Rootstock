@@ -3,6 +3,8 @@ import SwiftUI
 /// The Azure DevOps card: pull request, pipeline, and work item for the worktree.
 struct AzureSection: View {
   @Environment(WorkspaceModel.self) private var workspace
+  @Environment(WorktreeTabsStore.self) private var tabsStore
+  @Environment(WorktreeLinksStore.self) private var linksStore
   var worktree: WorktreeInfo
 
   @State private var model = WorktreeAzureModel()
@@ -40,6 +42,12 @@ struct AzureSection: View {
     let (resolvedOrg, resolvedProject) = WorkItemLink.resolveOrgProject(clone: clone)
     await model.load(worktree: worktree, remote: resolvedRemote,
                      workItemOrg: resolvedOrg, workItemProject: resolvedProject)
+
+    if let pr = model.pr, let remote = model.remote {
+      linksStore.setPullRequestURL(remote.pullRequestURL(id: pr.pullRequestId), for: worktree)
+    } else {
+      linksStore.setPullRequestURL(nil, for: worktree)
+    }
   }
 
   @ViewBuilder private var content: some View {
@@ -63,11 +71,12 @@ struct AzureSection: View {
 
   @ViewBuilder private var loadedContent: some View {
     PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipeline: model.pipeline, remote: model.remote,
-                    branch: worktree.branch)
+                    branch: worktree.branch, worktree: worktree, tabsStore: tabsStore)
     if model.workItemID != nil {
       Divider()
       WorkItemCard(item: model.workItem, id: model.workItemID, guessed: model.workItemGuessed,
                    workItemOrg: model.workItemOrg ?? model.remote?.org, workItemProject: model.workItemProject,
+                   worktree: worktree, tabsStore: tabsStore,
                    onConfirm: {
                      if let branch = worktree.branch { model.confirmWorkItem(worktree: worktree, branch: branch) }
                    })
@@ -83,13 +92,15 @@ private struct PullRequestCard: View {
   var pipeline: WorktreeAzureModel.Pipeline
   var remote: AzureRemote?
   var branch: String?
+  var worktree: WorktreeInfo
+  var tabsStore: WorktreeTabsStore
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Label("Pull Request", systemImage: "arrow.triangle.pull").font(.subheadline.weight(.medium))
         Spacer()
-        PipelinePill(pipeline: pipeline)
+        PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore)
       }
 
       if let pr {
@@ -101,7 +112,10 @@ private struct PullRequestCard: View {
           }
           Spacer()
           Button("Open", systemImage: "arrow.up.right.square") {
-            if let remote { AppOpener.open(remote.pullRequestURL(id: pr.pullRequestId)) }
+            if let remote {
+              WebLinkOpener.open(remote.pullRequestURL(id: pr.pullRequestId), title: "Pull Request",
+                                 systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
+            }
           }
           .controlSize(.small).labelStyle(.iconOnly)
         }
@@ -121,7 +135,8 @@ private struct PullRequestCard: View {
           Spacer()
           if let remote, let branch {
             Button("Create PR", systemImage: "plus") {
-              AppOpener.open(remote.createPRURL(sourceBranch: branch, targetBranch: nil))
+              WebLinkOpener.open(remote.createPRURL(sourceBranch: branch, targetBranch: nil), title: "Pull Request",
+                                 systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
             }
             .controlSize(.small)
           }
@@ -200,11 +215,16 @@ private struct ReviewerChip: View {
 
 private struct PipelinePill: View {
   var pipeline: WorktreeAzureModel.Pipeline
+  var worktree: WorktreeInfo
+  var tabsStore: WorktreeTabsStore
 
   var body: some View {
     if pipeline.state != .none {
       Button {
-        if let url = pipeline.url { AppOpener.open(url) }
+        if let url = pipeline.url {
+          WebLinkOpener.open(url, title: "Pipeline", systemImage: "checkmark.seal",
+                             worktree: worktree, tabsStore: tabsStore)
+        }
       } label: {
         Label(text, systemImage: icon).font(.caption.weight(.medium))
       }
@@ -250,6 +270,8 @@ private struct WorkItemCard: View {
   var guessed: Bool
   var workItemOrg: String?
   var workItemProject: String?
+  var worktree: WorktreeInfo
+  var tabsStore: WorktreeTabsStore
   var onConfirm: () -> Void
 
   var body: some View {
@@ -260,7 +282,8 @@ private struct WorkItemCard: View {
         if let id {
           Button("Open", systemImage: "arrow.up.right.square") {
             if let org = workItemOrg {
-              AppOpener.open(WorkItemLink.url(org: org, project: workItemProject, id: id))
+              WebLinkOpener.open(WorkItemLink.url(org: org, project: workItemProject, id: id), title: "Work Item",
+                                 systemImage: "checklist", worktree: worktree, tabsStore: tabsStore)
             }
           }
           .controlSize(.small).labelStyle(.iconOnly)

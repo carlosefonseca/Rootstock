@@ -33,12 +33,12 @@ struct WorktreeInspector: View {
   }
 }
 
-/// Header and quick actions. Work item / links live in the config editor now;
-/// this stays compact.
+/// Header and quick actions. Work item / Figma / Slack links live in the "+"
+/// tab menu now, alongside the other quick-open destinations; this stays a
+/// compact "open this worktree elsewhere" row.
 private struct TopSection: View {
   var worktree: WorktreeInfo
 
-  @State private var config = BranchConfig()
   @State private var showingEditor = false
   private let forkURL = AppOpener.forkAppURL()
 
@@ -78,15 +78,6 @@ private struct TopSection: View {
             }
           }
         }
-        Spacer()
-        if let figma = config.figmaURL, !figma.isEmpty {
-          Button("Figma", systemImage: "paintbrush.pointed") { AppOpener.open(figma) }
-            .labelStyle(.iconOnly)
-        }
-        if let slack = config.slackChannelURL, !slack.isEmpty {
-          Button("Slack", systemImage: "bubble.left.and.bubble.right") { AppOpener.openSlack(slack) }
-            .labelStyle(.iconOnly)
-        }
       }
       .controlSize(.small)
       .buttonStyle(.bordered)
@@ -95,17 +86,11 @@ private struct TopSection: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(.background.secondary, in: .rect(cornerRadius: 12))
     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
-    .task(id: worktree.path) { load() }
-    .sheet(isPresented: $showingEditor, onDismiss: load) {
+    .sheet(isPresented: $showingEditor) {
       if let branch = worktree.branch {
         SharedConfigEditor(worktree: worktree, branch: branch)
       }
     }
-  }
-
-  private func load() {
-    guard let branch = worktree.branch else { return }
-    config = BranchConfig.load(worktree: worktree.url, branch: branch)
   }
 }
 

@@ -6,11 +6,34 @@ import SwiftUI
 struct MainTabBarView: View {
   @Environment(WorkspaceModel.self) private var workspace
   @Environment(WorktreeTabsStore.self) private var tabsStore
+  @Environment(WorktreeLinksStore.self) private var linksStore
   var worktree: WorktreeInfo
 
   private var tabs: [MainTab] { tabsStore.tabs(for: worktree) }
   private var selectedID: MainTab.ID? { tabsStore.selectedTabID(for: worktree) }
   private var selectedTab: MainTab? { tabs.first { $0.id == selectedID } }
+
+  /// The branch's shared config — read fresh each time the menu opens, since
+  /// it can change (via the config editor) without the tab bar reloading.
+  private var branchConfig: BranchConfig? {
+    guard let branch = worktree.branch else { return nil }
+    return BranchConfig.load(worktree: worktree.url, branch: branch)
+  }
+
+  /// Only resolvable without a network round-trip when the work item id is
+  /// already recorded in the shared config — a guessed-but-unconfirmed id
+  /// isn't reliable enough to offer as a one-click link.
+  private var workItemURL: String? {
+    guard let id = branchConfig?.workItemID, !id.isEmpty else { return nil }
+    let (org, project) = WorkItemLink.resolveOrgProject(clone: workspace.clone(forWorktree: worktree))
+    guard let org else { return nil }
+    return WorkItemLink.url(org: org, project: project, id: id)
+  }
+
+  private var hasAnyQuickLink: Bool {
+    linksStore.pullRequestURL(for: worktree) != nil || workItemURL != nil ||
+    !(branchConfig?.figmaURL ?? "").isEmpty || !(branchConfig?.slackChannelURL ?? "").isEmpty
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -42,6 +65,33 @@ struct MainTabBarView: View {
         Button("New Web Tab", systemImage: "globe") {
           let tab = tabsStore.addWebTab(for: worktree)
           tabsStore.select(tab.id, for: worktree)
+        }
+
+        if hasAnyQuickLink {
+          Divider()
+          if let prURL = linksStore.pullRequestURL(for: worktree) {
+            Button("Pull Request", systemImage: "arrow.triangle.pull") {
+              WebLinkOpener.open(prURL, title: "Pull Request", systemImage: "arrow.triangle.pull",
+                                 worktree: worktree, tabsStore: tabsStore)
+            }
+          }
+          if let workItemURL {
+            Button("Work Item", systemImage: "checklist") {
+              WebLinkOpener.open(workItemURL, title: "Work Item", systemImage: "checklist",
+                                 worktree: worktree, tabsStore: tabsStore)
+            }
+          }
+          if let figma = branchConfig?.figmaURL, !figma.isEmpty {
+            Button("Figma", systemImage: "paintbrush.pointed") {
+              WebLinkOpener.open(figma, title: "Figma", systemImage: "paintbrush.pointed",
+                                 worktree: worktree, tabsStore: tabsStore)
+            }
+          }
+          if let slack = branchConfig?.slackChannelURL, !slack.isEmpty {
+            Button("Slack", systemImage: "bubble.left.and.bubble.right") {
+              AppOpener.openSlack(slack)
+            }
+          }
         }
       } label: {
         Image(systemName: "plus")

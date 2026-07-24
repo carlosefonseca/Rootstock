@@ -5,12 +5,14 @@ import SwiftData
 struct RootstockApp: App {
   @State private var workspace = WorkspaceModel()
   @State private var tabsStore = WorktreeTabsStore()
+  @State private var linksStore = WorktreeLinksStore()
 
   var body: some Scene {
     WindowGroup {
       ContentView()
         .environment(workspace)
         .environment(tabsStore)
+        .environment(linksStore)
         .frame(minWidth: 820, minHeight: 520)
     }
     .modelContainer(Self.sharedModelContainer)

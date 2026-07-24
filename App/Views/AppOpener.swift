@@ -50,3 +50,21 @@ enum AppOpener {
     open(urlString)
   }
 }
+
+/// Every button that opens a web URL (PR, work item, pipeline, Figma) goes
+/// through here: in-app by default, Cmd or Option held opens it in the system
+/// browser instead — the escape hatch for OAuth flows, browser extensions, or
+/// anything the embedded WKWebView can't handle. Slack is intentionally not
+/// routed through this — its native app is the better default there.
+enum WebLinkOpener {
+  @MainActor
+  static func open(_ urlString: String, title: String, systemImage: String,
+                   worktree: WorktreeInfo, tabsStore: WorktreeTabsStore) {
+    let flags = NSEvent.modifierFlags
+    if flags.contains(.command) || flags.contains(.option) {
+      AppOpener.open(urlString)
+    } else {
+      tabsStore.openWebTab(title: title, systemImage: systemImage, urlString: urlString, for: worktree)
+    }
+  }
+}

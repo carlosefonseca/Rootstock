@@ -97,6 +97,24 @@ final class WorktreeTabsStore {
     return tab
   }
 
+  /// Opens `urlString` for `worktree` — reusing an existing tab with the same
+  /// title (e.g. the default "Work Item" tab, or a tab opened this same way
+  /// before) rather than creating a duplicate every time a link is clicked.
+  @discardableResult
+  func openWebTab(title: String, systemImage: String, urlString: String, for worktree: WorktreeInfo) -> MainTab {
+    if let existing = tabsByWorktree[worktree.path]?.first(where: { $0.kind == .web && $0.title == title }) {
+      existing.webSession?.load(urlString)
+      selection[worktree.path] = existing.id
+      persist()
+      return existing
+    }
+    let tab = makeWebTab(title: title, systemImage: systemImage, urlString: urlString)
+    tabsByWorktree[worktree.path, default: []].append(tab)
+    selection[worktree.path] = tab.id
+    persist()
+    return tab
+  }
+
   /// Closes a tab, terminating its session. Never leaves a worktree with zero
   /// tabs — a fresh terminal tab replaces the last one closed.
   func close(_ id: MainTab.ID, for worktree: WorktreeInfo) {

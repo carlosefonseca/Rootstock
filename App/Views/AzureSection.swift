@@ -8,6 +8,7 @@ struct AzureSection: View {
   @State private var model = WorktreeAzureModel()
   @State private var remote: AzureRemote?
   @State private var workItemOrg: String?
+  @State private var workItemProject: String?
 
   var body: some View {
     CollapsibleCard(title: "Azure DevOps", systemImage: "cloud", stateKey: "azure") {
@@ -31,7 +32,9 @@ struct AzureSection: View {
     remote = AzureRemote.parse(clone?.remoteURL)
     let dcdp = clone.map { DcdpConfig.load(worktree: $0.rootURL) } ?? nil
     workItemOrg = dcdp?.workItemOrg ?? AzureSettingsStore.defaultWorkItemOrg
-    await model.load(worktree: worktree, remote: remote, workItemOrg: workItemOrg)
+    workItemProject = dcdp?.workItemProject ?? AzureSettingsStore.defaultWorkItemProject
+    await model.load(worktree: worktree, remote: remote,
+                     workItemOrg: workItemOrg, workItemProject: workItemProject)
   }
 
   @ViewBuilder private var content: some View {

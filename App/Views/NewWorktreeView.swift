@@ -219,9 +219,11 @@ struct NewWorktreeView: View {
   /// Looks the work item up in Azure DevOps and pre-fills title + type.
   private func fetchWorkItem() {
     guard let clone = selectedClone else { return }
-    let org = DcdpConfig.load(worktree: clone.rootURL)?.workItemOrg
+    let dcdp = DcdpConfig.load(worktree: clone.rootURL)
+    let org = dcdp?.workItemOrg
       ?? AzureSettingsStore.defaultWorkItemOrg
       ?? AzureRemote.parse(clone.remoteURL)?.org
+    let project = dcdp?.workItemProject ?? AzureSettingsStore.defaultWorkItemProject
     guard let org else {
       fetchError = "No Azure DevOps organization for this clone."
       return
@@ -231,14 +233,15 @@ struct NewWorktreeView: View {
     let id = workItemID
     Task {
       do {
-        let item = try await AzureService().workItem(org: org, id: id)
+        let item = try await AzureService().workItem(org: org, project: project, id: id)
         fetchedTitle = item.title
         if source == .newBranch {
           if let fetchedTitle = item.title { title = fetchedTitle }
           if let fetchedType = item.type { type = mapType(fetchedType) }
         }
       } catch {
-        fetchError = error.localizedDescription
+        let scope = project.map { "\(org)/\($0)" } ?? org
+        fetchError = "\(error.localizedDescription) (queried \(scope))"
       }
       fetching = false
     }

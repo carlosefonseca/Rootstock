@@ -31,8 +31,9 @@ final class WorktreeAzureModel {
   private let service = AzureService()
 
   /// Loads everything for `worktree`. `remote` is parsed from the clone's origin;
-  /// `workItemOrg` comes from `.dcdp/config.toml` (falling back to the code org).
-  func load(worktree: WorktreeInfo, remote: AzureRemote?, workItemOrg: String?) async {
+  /// `workItemOrg`/`workItemProject` come from `.dcdp/config.toml` or the user's
+  /// defaults (falling back to the code org).
+  func load(worktree: WorktreeInfo, remote: AzureRemote?, workItemOrg: String?, workItemProject: String?) async {
     guard let remote, let branch = worktree.branch else {
       phase = .notConfigured
       return
@@ -53,8 +54,9 @@ final class WorktreeAzureModel {
         self.pipeline = pipeline(from: [], build: await service.latestBuild(remote: remote, branch: branch))
       }
 
-      await resolveWorkItem(worktree: worktree, branch: branch,
-                            remote: remote, workItemOrg: workItemOrg, prDescription: pull?.description)
+      await resolveWorkItem(worktree: worktree, branch: branch, remote: remote,
+                            workItemOrg: workItemOrg, workItemProject: workItemProject,
+                            prDescription: pull?.description)
       phase = .loaded
     } catch {
       phase = .failed(error.localizedDescription)
@@ -71,7 +73,7 @@ final class WorktreeAzureModel {
   }
 
   private func resolveWorkItem(worktree: WorktreeInfo, branch: String, remote: AzureRemote,
-                               workItemOrg: String?, prDescription: String?) async {
+                               workItemOrg: String?, workItemProject: String?, prDescription: String?) async {
     let config = BranchConfig.load(worktree: worktree.url, branch: branch)
     guard let resolution = WorkItemResolver.resolve(
       config: config, branch: branch, prDescription: prDescription) else {
@@ -90,7 +92,7 @@ final class WorktreeAzureModel {
     }
 
     let org = workItemOrg ?? remote.org
-    workItem = try? await service.workItem(org: org, id: resolution.id)
+    workItem = try? await service.workItem(org: org, project: workItemProject, id: resolution.id)
   }
 
   private func pipeline(from statuses: [ADOPRStatus], build: ADOBuild?) -> Pipeline {

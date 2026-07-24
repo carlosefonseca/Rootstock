@@ -52,10 +52,17 @@ struct AzureService {
     return list?.value.first
   }
 
-  /// Work item detail from the (possibly different) work-item org.
-  func workItem(org: String, id: String) async throws -> ADOWorkItem {
-    try await client.get(ADOWorkItem.self, org: org,
-      path: "_apis/wit/workitems/\(id)",
+  /// Work item detail from the (possibly different) work-item org. Scoped to
+  /// `project` when known, which matters when the work items live in a different
+  /// org/project than the code (the two-org setup).
+  func workItem(org: String, project: String?, id: String) async throws -> ADOWorkItem {
+    let path: String
+    if let project, !project.isEmpty {
+      path = "\(encode(project))/_apis/wit/workitems/\(id)"
+    } else {
+      path = "_apis/wit/workitems/\(id)"
+    }
+    return try await client.get(ADOWorkItem.self, org: org, path: path,
       query: ["fields": "System.Title,System.State,System.WorkItemType"])
   }
 }

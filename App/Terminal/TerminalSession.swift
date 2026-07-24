@@ -25,6 +25,12 @@ final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDel
     super.init()
     terminalView.processDelegate = self
     terminalView.font = AppSettings.terminalFont()
+    // SwiftTerm defaults Option to a Meta-key modifier (sends ESC + key, for
+    // Emacs-style Alt bindings), which swallows Option-modified key combos
+    // before they can compose characters like @, ç, or ~ on non-US keyboard
+    // layouts. Rootstock isn't targeting Meta-key shell workflows, so let
+    // Option behave like normal text input instead.
+    terminalView.optionAsMetaKey = false
     NotificationCenter.default.addObserver(
       forName: .terminalFontChanged, object: nil, queue: .main) { [weak self] _ in
       MainActor.assumeIsolated { self?.terminalView.font = AppSettings.terminalFont() }

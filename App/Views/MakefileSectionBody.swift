@@ -28,14 +28,14 @@ struct MakefileSectionBody: View {
           .foregroundStyle(.secondary)
       } else {
         ForEach(visible) { target in
+          // .buttonStyle(.bordered) doesn't reliably honor .frame(maxWidth: .infinity)
+          // on macOS — the bezel sizes to the label's intrinsic content, so rows with
+          // longer text quietly ended up narrower and the icon drifted with them.
+          // .plain hands full sizing control to the label, which we then draw the
+          // bordered look onto ourselves, so every row is genuinely the same width.
           Button {
             runner.start("make \(target.name)", label: target.name, in: worktree.url)
           } label: {
-            // The play icon is pinned via a trailing overlay on the full-width
-            // label rather than an HStack + Spacer — with a Spacer, the icon's
-            // exact position could drift a few points row to row depending on
-            // how the button's intrinsic width interacted with long text; an
-            // overlay anchors it to the same edge regardless of content.
             VStack(alignment: .leading, spacing: 1) {
               Text(target.name).font(.callout.weight(.medium))
               Text(target.help)
@@ -48,15 +48,16 @@ struct MakefileSectionBody: View {
             .padding(.vertical, 6)
             .padding(.leading, 8)
             .padding(.trailing, 24)
-            .contentShape(.rect)
             .overlay(alignment: .trailing) {
               Image(systemName: "play.fill")
                 .font(.caption2)
                 .foregroundStyle(.tint)
                 .padding(.trailing, 8)
             }
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(.rect)
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(.plain)
           .frame(maxWidth: .infinity, alignment: .leading)
           .disabled(runner.isRunning)
           .help(target.help)

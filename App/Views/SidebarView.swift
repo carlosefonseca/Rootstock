@@ -4,6 +4,7 @@ import AppKit
 struct SidebarView: View {
   @Environment(WorkspaceModel.self) private var workspace
   @State private var showingNewWorktree = false
+  @State private var editingTerminalCommandFor: TrackedClone?
 
   var body: some View {
     @Bindable var workspace = workspace
@@ -26,6 +27,7 @@ struct SidebarView: View {
             .contextMenu {
               Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([clone.rootURL]) }
               Button("Refresh") { Task { await workspace.refreshClone(commonDir: clone.commonDir, rootURL: clone.rootURL) } }
+              Button("Terminal Command…") { editingTerminalCommandFor = clone }
               Divider()
               Button("Stop Tracking", role: .destructive) { workspace.removeClone(clone) }
             }
@@ -63,6 +65,11 @@ struct SidebarView: View {
     .sheet(isPresented: $showingNewWorktree) {
       NewWorktreeView()
     }
+    .sheet(item: $editingTerminalCommandFor) { clone in
+      TerminalCommandEditor(clone: clone) { command in
+        workspace.setTerminalInitCommand(command, for: clone)
+      }
+    }
   }
 
   private func trackClone() {
@@ -82,6 +89,38 @@ struct SidebarView: View {
         alert.runModal()
       }
     }
+  }
+}
+
+private struct TerminalCommandEditor: View {
+  @Environment(\.dismiss) private var dismiss
+  var clone: TrackedClone
+  var onSave: (String?) -> Void
+
+  @State private var command = ""
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Terminal Command").font(.title3.weight(.semibold))
+      Text("Typed automatically into every new terminal tab in \(clone.displayName), right after the shell starts. Stored on this Mac only — never written to the repo.")
+        .font(.caption).foregroundStyle(.secondary)
+      TextField("Command", text: $command, prompt: Text("e.g. nvm use"))
+        .textFieldStyle(.roundedBorder)
+        .font(.body.monospaced())
+      HStack {
+        Spacer()
+        Button("Cancel") { dismiss() }
+        Button("Save") {
+          let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+          onSave(trimmed.isEmpty ? nil : trimmed)
+          dismiss()
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(20)
+    .frame(width: 400)
+    .onAppear { command = clone.terminalInitCommand ?? "" }
   }
 }
 

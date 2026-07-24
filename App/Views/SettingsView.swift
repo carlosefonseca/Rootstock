@@ -14,14 +14,10 @@ struct SettingsView: View {
 }
 
 private struct GeneralSettingsView: View {
-  @AppStorage(AppSettings.terminalAppPathKey) private var terminalAppPath = AppSettings.defaultTerminalAppPath
   @AppStorage(AppSettings.terminalFontNameKey) private var fontName = "Menlo"
   @AppStorage(AppSettings.terminalFontSizeKey) private var fontSize = 12.0
 
-  @State private var terminalApps: [URL] = []
   @State private var monospacedFonts: [String] = []
-
-  private static let chooseOtherTag = "__choose_other__"
 
   /// Every fixed-pitch font actually installed — including any Nerd Fonts — not a
   /// curated shortlist. Filtered to monospaced since a terminal needs a fixed grid.
@@ -40,18 +36,6 @@ private struct GeneralSettingsView: View {
   var body: some View {
     Form {
       Section("Terminal") {
-        Picker("Open in", selection: $terminalAppPath) {
-          ForEach(terminalApps, id: \.path) { url in
-            Text(url.deletingPathExtension().lastPathComponent).tag(url.path)
-          }
-          Divider()
-          Text("Other…").tag(Self.chooseOtherTag)
-        }
-        .onChange(of: terminalAppPath) { oldValue, newValue in
-          guard newValue == Self.chooseOtherTag else { return }
-          chooseTerminalApp(fallback: oldValue)
-        }
-
         Picker("Font", selection: $fontName) {
           ForEach(availableFonts, id: \.self) { name in
             Text(name).font(.custom(name, size: 13)).tag(name)
@@ -70,35 +54,7 @@ private struct GeneralSettingsView: View {
     }
     .formStyle(.grouped)
     .task {
-      loadTerminalApps()
       if monospacedFonts.isEmpty { monospacedFonts = Self.loadMonospacedFonts() }
-    }
-  }
-
-  private func loadTerminalApps() {
-    let bundleIDs = ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty",
-                     "dev.warp.Warp-Stable", "net.kovidgoyal.kitty", "org.alacritty",
-                     "com.github.wez.wezterm"]
-    var urls = bundleIDs.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
-    let current = URL(fileURLWithPath: terminalAppPath)
-    if !urls.contains(where: { $0.path == current.path }), FileManager.default.fileExists(atPath: current.path) {
-      urls.append(current)
-    }
-    terminalApps = urls
-  }
-
-  private func chooseTerminalApp(fallback: String) {
-    let panel = NSOpenPanel()
-    panel.canChooseDirectories = false
-    panel.canChooseFiles = true
-    panel.allowedContentTypes = [.application]
-    panel.directoryURL = URL(fileURLWithPath: "/Applications")
-    panel.prompt = "Choose"
-    if panel.runModal() == .OK, let url = panel.url {
-      terminalAppPath = url.path
-      loadTerminalApps()
-    } else {
-      terminalAppPath = fallback
     }
   }
 }

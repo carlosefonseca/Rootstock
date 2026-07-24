@@ -4,6 +4,7 @@ import SwiftUI
 /// tabs the user opens) above whichever tab is selected. Tabs are per-worktree
 /// and persist across worktree switches — see `WorktreeTabsStore`.
 struct MainTabBarView: View {
+  @Environment(WorkspaceModel.self) private var workspace
   @Environment(WorktreeTabsStore.self) private var tabsStore
   @Environment(WorktreeLinksStore.self) private var linksStore
   var worktree: WorktreeInfo
@@ -11,6 +12,12 @@ struct MainTabBarView: View {
   private var tabs: [MainTab] { tabsStore.tabs(for: worktree) }
   private var selectedID: MainTab.ID? { tabsStore.selectedTabID(for: worktree) }
   private var selectedTab: MainTab? { tabs.first { $0.id == selectedID } }
+
+  /// The clone's local-only terminal init command — typed into every new
+  /// terminal tab's shell right after it starts.
+  private var terminalInitCommand: String? {
+    workspace.clone(forWorktree: worktree)?.terminalInitCommand
+  }
 
   /// The branch's shared config — read fresh each time the menu opens, since
   /// it can change (via the config editor) without the tab bar reloading.
@@ -37,7 +44,7 @@ struct MainTabBarView: View {
       content
     }
     .task(id: worktree.path) {
-      tabsStore.ensureDefaultTabs(for: worktree)
+      tabsStore.ensureDefaultTabs(for: worktree, initialCommand: terminalInitCommand)
     }
     .background {
       // Invisible buttons rather than a `.commands` menu item: those are
@@ -67,7 +74,7 @@ struct MainTabBarView: View {
       }
       Menu {
         Button("New Terminal Tab", systemImage: "terminal") {
-          let tab = tabsStore.addTerminalTab(for: worktree)
+          let tab = tabsStore.addTerminalTab(for: worktree, initialCommand: terminalInitCommand)
           tabsStore.select(tab.id, for: worktree)
         }
         Button("New Web Tab", systemImage: "globe") {
@@ -144,8 +151,8 @@ private struct TabChip: View {
   @State private var hovering = false
 
   var body: some View {
-    HStack(spacing: 5) {
-      Image(systemName: tab.systemImage).font(.caption2)
+    HStack(spacing: 6) {
+      icon
       Text(tab.displayTitle).font(.caption).lineLimit(1)
       if hovering || isSelected {
         Button(action: close) {
@@ -156,12 +163,20 @@ private struct TabChip: View {
       }
     }
     .padding(.horizontal, 8)
-    .padding(.vertical, 4)
+    .padding(.vertical, 8)
     .frame(maxWidth: 160, alignment: .leading)
     .background(isSelected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
     .contentShape(.rect)
     .onTapGesture { select() }
     .onHover { hovering = $0 }
     .help(tab.displayTitle)
+  }
+
+  @ViewBuilder private var icon: some View {
+    if let favicon = tab.webSession?.favicon {
+      Image(nsImage: favicon).resizable().frame(width: 14, height: 14)
+    } else {
+      Image(systemName: tab.systemImage).font(.caption2).frame(width: 14, height: 14)
+    }
   }
 }

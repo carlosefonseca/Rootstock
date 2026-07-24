@@ -26,6 +26,10 @@ private struct PersistedWorktreeTabs: Codable {
 final class WorktreeTabsStore {
   private(set) var tabsByWorktree: [String: [MainTab]] = [:]
   private(set) var selection: [String: MainTab.ID] = [:]
+  /// The clone-level terminal init command for each worktree, refreshed on
+  /// every `ensureDefaultTabs`/`addTerminalTab` call so an edit made in
+  /// Settings applies to the next terminal opened, not just app relaunch.
+  private var initialCommands: [String: String] = [:]
 
   private static let storageKey = "tabs.persisted"
 
@@ -41,7 +45,8 @@ final class WorktreeTabsStore {
   /// otherwise builds the starting set: a terminal, plus a work-item tab and a
   /// Figma tab when the branch's shared config already has them set. Only ever
   /// runs once per worktree per launch.
-  func ensureDefaultTabs(for worktree: WorktreeInfo) {
+  func ensureDefaultTabs(for worktree: WorktreeInfo, initialCommand: String? = nil) {
+    initialCommands[worktree.path] = (initialCommand?.isEmpty == false) ? initialCommand : nil
     guard tabsByWorktree[worktree.path] == nil else { return }
 
     if let saved = Self.loadPersisted()[worktree.path], !saved.tabs.isEmpty {
@@ -88,7 +93,8 @@ final class WorktreeTabsStore {
   }
 
   @discardableResult
-  func addTerminalTab(for worktree: WorktreeInfo) -> MainTab {
+  func addTerminalTab(for worktree: WorktreeInfo, initialCommand: String? = nil) -> MainTab {
+    initialCommands[worktree.path] = (initialCommand?.isEmpty == false) ? initialCommand : nil
     let tab = makeTerminalTab(for: worktree, title: "Terminal")
     tabsByWorktree[worktree.path, default: []].append(tab)
     selection[worktree.path] = tab.id
@@ -148,7 +154,7 @@ final class WorktreeTabsStore {
 
   private func makeTerminalTab(for worktree: WorktreeInfo, title: String) -> MainTab {
     let session = TerminalSession(id: UUID().uuidString, directory: worktree.url, title: title)
-    session.start()
+    session.start(initialCommand: initialCommands[worktree.path])
     return MainTab(kind: .terminal, title: title, systemImage: "terminal", terminalSession: session)
   }
 

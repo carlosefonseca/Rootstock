@@ -41,6 +41,7 @@ private struct TopSection: View {
 
   @State private var showingEditor = false
   private let forkURL = AppOpener.forkAppURL()
+  private let vscodeURL = AppOpener.vscodeAppURL()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -67,7 +68,16 @@ private struct TopSection: View {
 
       HStack(spacing: 8) {
         Button("Finder", systemImage: "folder") { AppOpener.revealInFinder(worktree.url) }
-        Button("Terminal", systemImage: "terminal") { AppOpener.openInTerminal(worktree.url) }
+        if let vscodeURL {
+          Button { AppOpener.openInVSCode(worktree.url) } label: {
+            Label {
+              Text("VS Code")
+            } icon: {
+              Image(nsImage: AppOpener.appIcon(vscodeURL))
+                .resizable().frame(width: 15, height: 15)
+            }
+          }
+        }
         if let forkURL {
           Button { AppOpener.openInFork(worktree.url) } label: {
             Label {

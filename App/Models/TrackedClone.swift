@@ -12,6 +12,10 @@ final class TrackedClone {
   var rootPath: String
   var remoteURL: String?
   var addedAt: Date
+  /// Typed into every new terminal tab's shell right after it starts — e.g. a
+  /// `nvm use` or a workspace-specific env setup. Local to this machine only,
+  /// never written into the repo.
+  var terminalInitCommand: String?
 
   init(commonDir: String, displayName: String, rootPath: String, remoteURL: String?) {
     self.commonDir = commonDir

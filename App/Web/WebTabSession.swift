@@ -15,6 +15,8 @@ final class WebTabSession: NSObject {
   private(set) var canGoForward = false
   private(set) var isLoading = false
   private(set) var title: String?
+  private(set) var favicon: NSImage?
+  private var faviconURLString: String?
 
   /// Fired after each navigation settles, so the tab store can persist the
   /// tab's latest URL without polling.
@@ -80,6 +82,25 @@ extension WebTabSession: WKNavigationDelegate {
     title = webView.title?.isEmpty == false ? webView.title : nil
     if let url = webView.url?.absoluteString { currentURLString = url }
     onNavigate?()
+    loadFavicon()
+  }
+
+  /// Reads the page's declared `<link rel="icon">`, falling back to the
+  /// origin's `/favicon.ico` — fetched directly from the site itself rather
+  /// than a third-party favicon proxy, since some of these pages are internal.
+  private func loadFavicon() {
+    webView.evaluateJavaScript(
+      "document.querySelector(\"link[rel~='icon']\")?.href || (location.origin + '/favicon.ico')"
+    ) { [weak self] result, _ in
+      guard let href = result as? String else { return }
+      Task { @MainActor [weak self] in
+        guard let self, href != self.faviconURLString, let url = URL(string: href) else { return }
+        self.faviconURLString = href
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let image = NSImage(data: data) else { return }
+        self.favicon = image
+      }
+    }
   }
 }
 

@@ -87,6 +87,11 @@ final class WorkspaceModel {
     return true
   }
 
+  func setTerminalInitCommand(_ command: String?, for clone: TrackedClone) {
+    clone.terminalInitCommand = command
+    try? context?.save()
+  }
+
   func removeClone(_ clone: TrackedClone) {
     guard let context else { return }
     worktrees[clone.commonDir] = nil

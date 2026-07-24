@@ -3,15 +3,10 @@ import AppKit
 /// Small helpers for handing a worktree off to other tools in the workflow.
 enum AppOpener {
   static let forkBundleID = "com.DanPristupov.Fork"
+  static let vscodeBundleID = "com.microsoft.VSCode"
 
   static func revealInFinder(_ url: URL) {
     NSWorkspace.shared.activateFileViewerSelecting([url])
-  }
-
-  /// Opens the worktree in the user's configured terminal app.
-  static func openInTerminal(_ url: URL) {
-    NSWorkspace.shared.open([url], withApplicationAt: AppSettings.terminalAppURL,
-                            configuration: NSWorkspace.OpenConfiguration())
   }
 
   /// The Fork app URL, or nil when Fork isn't installed.
@@ -26,6 +21,21 @@ enum AppOpener {
   static func openInFork(_ url: URL) {
     guard let fork = forkAppURL() else { return }
     NSWorkspace.shared.open([url], withApplicationAt: fork,
+                            configuration: NSWorkspace.OpenConfiguration())
+  }
+
+  /// The VS Code app URL, or nil when it isn't installed.
+  static func vscodeAppURL() -> URL? {
+    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: vscodeBundleID) {
+      return url
+    }
+    let fallback = URL(fileURLWithPath: "/Applications/Visual Studio Code.app")
+    return FileManager.default.fileExists(atPath: fallback.path) ? fallback : nil
+  }
+
+  static func openInVSCode(_ url: URL) {
+    guard let vscode = vscodeAppURL() else { return }
+    NSWorkspace.shared.open([url], withApplicationAt: vscode,
                             configuration: NSWorkspace.OpenConfiguration())
   }
 

@@ -1,18 +1,9 @@
 import AppKit
 
-/// User preferences that aren't Azure-specific: the external terminal app and the
-/// in-app terminal font.
+/// User preferences that aren't Azure-specific: the in-app terminal font.
 enum AppSettings {
-  static let terminalAppPathKey = "terminal.appPath"
   static let terminalFontNameKey = "terminal.fontName"
   static let terminalFontSizeKey = "terminal.fontSize"
-
-  static let defaultTerminalAppPath = "/System/Applications/Utilities/Terminal.app"
-
-  static var terminalAppURL: URL {
-    let path = UserDefaults.standard.string(forKey: terminalAppPathKey) ?? defaultTerminalAppPath
-    return URL(fileURLWithPath: path)
-  }
 
   static var terminalFontName: String {
     UserDefaults.standard.string(forKey: terminalFontNameKey) ?? "Menlo"

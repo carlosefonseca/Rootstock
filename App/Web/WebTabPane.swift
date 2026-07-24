@@ -3,7 +3,7 @@ import SwiftUI
 /// Safari-style chrome — back/forward/reload plus an address bar — wrapping the
 /// live `WKWebView` for one web tab.
 struct WebTabPane: View {
-  @Bindable var session: WebTabSession
+  var session: WebTabSession
   @State private var addressText: String = ""
   @FocusState private var addressFocused: Bool
 

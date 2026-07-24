@@ -1,10 +1,12 @@
 import Foundation
+import Observation
 import SwiftTerm
 import AppKit
 
-/// One live PTY-backed terminal bound to a worktree. Wraps SwiftTerm's
+/// One live PTY-backed terminal bound to a tab. Wraps SwiftTerm's
 /// `LocalProcessTerminalView` so the same running process can be shown, detached,
-/// and shown again as the user switches worktrees or reopens the window.
+/// and shown again as the user switches worktrees, tabs, or reopens the window.
+@Observable
 @MainActor
 final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDelegate {
   let id: String            // session key (e.g. worktree path)

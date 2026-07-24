@@ -5,7 +5,7 @@ struct WorktreeDetailView: View {
   @AppStorage("detail.showInspector") private var showInspector = true
 
   var body: some View {
-    WorktreeTerminalPane(worktree: worktree)
+    MainTabBarView(worktree: worktree)
       .inspector(isPresented: $showInspector) {
         WorktreeInspector(worktree: worktree)
           .inspectorColumnWidth(min: 300, ideal: 340, max: 480)

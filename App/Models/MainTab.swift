@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-enum MainTabKind: Equatable {
+enum MainTabKind: String, Equatable, Codable {
   case terminal
   case web
 }

@@ -1,15 +1,33 @@
 import Foundation
 import Observation
 
+/// A tab's persisted shape — just enough to recreate it on next launch. Live
+/// session state (a running shell, a loaded page) can't survive a restart, so
+/// terminal tabs come back as a fresh shell and web tabs reload their last URL.
+private struct PersistedTab: Codable {
+  var kind: MainTabKind
+  var title: String
+  var systemImage: String
+  var urlString: String?
+}
+
+private struct PersistedWorktreeTabs: Codable {
+  var tabs: [PersistedTab]
+  var selectedIndex: Int?
+}
+
 /// App-lifetime owner of each worktree's tab bar. Tabs (and the sessions they
 /// hold) persist across worktree switches — matching how terminal sessions used
 /// to behave — since this store, not the view, is what's alive for the app's
-/// duration.
+/// duration. The tab *list* (kind/title/URL) is also persisted to disk so it
+/// survives an app restart; the sessions themselves are rebuilt fresh.
 @Observable
 @MainActor
 final class WorktreeTabsStore {
   private(set) var tabsByWorktree: [String: [MainTab]] = [:]
   private(set) var selection: [String: MainTab.ID] = [:]
+
+  private static let storageKey = "tabs.persisted"
 
   func tabs(for worktree: WorktreeInfo) -> [MainTab] {
     tabsByWorktree[worktree.path] ?? []
@@ -19,12 +37,20 @@ final class WorktreeTabsStore {
     selection[worktree.path]
   }
 
-  /// Builds the worktree's starting tabs the first time it's opened: a terminal,
-  /// plus a work-item tab and a Figma tab when the branch's shared config already
-  /// has them set. Only ever runs once per worktree — later edits to the config
-  /// don't retroactively add tabs to an already-open worktree.
+  /// Restores the worktree's tabs from a previous session if any were saved;
+  /// otherwise builds the starting set: a terminal, plus a work-item tab and a
+  /// Figma tab when the branch's shared config already has them set. Only ever
+  /// runs once per worktree per launch.
   func ensureDefaultTabs(for worktree: WorktreeInfo, clone: TrackedClone?) {
     guard tabsByWorktree[worktree.path] == nil else { return }
+
+    if let saved = Self.loadPersisted()[worktree.path], !saved.tabs.isEmpty {
+      let tabs = saved.tabs.map { restoreTab(from: $0, worktree: worktree) }
+      tabsByWorktree[worktree.path] = tabs
+      let index = saved.selectedIndex.flatMap { tabs.indices.contains($0) ? $0 : nil } ?? 0
+      selection[worktree.path] = tabs[index].id
+      return
+    }
 
     var tabs = [makeTerminalTab(for: worktree, title: "Terminal")]
 
@@ -35,22 +61,22 @@ final class WorktreeTabsStore {
         let (org, project) = WorkItemLink.resolveOrgProject(clone: clone)
         if let org {
           let url = WorkItemLink.url(org: org, project: project, id: workItemID)
-          tabs.append(MainTab(kind: .web, title: "Work Item", systemImage: "checklist",
-                              webSession: WebTabSession(urlString: url)))
+          tabs.append(makeWebTab(title: "Work Item", systemImage: "checklist", urlString: url))
         }
       }
       if let figma = config.figmaURL, !figma.isEmpty {
-        tabs.append(MainTab(kind: .web, title: "Figma", systemImage: "paintbrush.pointed",
-                            webSession: WebTabSession(urlString: figma)))
+        tabs.append(makeWebTab(title: "Figma", systemImage: "paintbrush.pointed", urlString: figma))
       }
     }
 
     tabsByWorktree[worktree.path] = tabs
     selection[worktree.path] = tabs.first?.id
+    persist()
   }
 
   func select(_ id: MainTab.ID, for worktree: WorktreeInfo) {
     selection[worktree.path] = id
+    persist()
   }
 
   @discardableResult
@@ -58,15 +84,16 @@ final class WorktreeTabsStore {
     let tab = makeTerminalTab(for: worktree, title: "Terminal")
     tabsByWorktree[worktree.path, default: []].append(tab)
     selection[worktree.path] = tab.id
+    persist()
     return tab
   }
 
   @discardableResult
   func addWebTab(for worktree: WorktreeInfo) -> MainTab {
-    let tab = MainTab(kind: .web, title: "New Tab", systemImage: "globe",
-                      webSession: WebTabSession(urlString: "about:blank"))
+    let tab = makeWebTab(title: "New Tab", systemImage: "globe", urlString: "about:blank")
     tabsByWorktree[worktree.path, default: []].append(tab)
     selection[worktree.path] = tab.id
+    persist()
     return tab
   }
 
@@ -87,11 +114,51 @@ final class WorktreeTabsStore {
       let newIndex = min(index, tabs.count - 1)
       selection[worktree.path] = tabs[newIndex].id
     }
+    persist()
   }
 
   private func makeTerminalTab(for worktree: WorktreeInfo, title: String) -> MainTab {
     let session = TerminalSession(id: UUID().uuidString, directory: worktree.url, title: title)
     session.start()
     return MainTab(kind: .terminal, title: title, systemImage: "terminal", terminalSession: session)
+  }
+
+  private func makeWebTab(title: String, systemImage: String, urlString: String) -> MainTab {
+    let session = WebTabSession(urlString: urlString)
+    session.onNavigate = { [weak self] in self?.persist() }
+    return MainTab(kind: .web, title: title, systemImage: systemImage, webSession: session)
+  }
+
+  private func restoreTab(from saved: PersistedTab, worktree: WorktreeInfo) -> MainTab {
+    switch saved.kind {
+    case .terminal:
+      return makeTerminalTab(for: worktree, title: saved.title)
+    case .web:
+      return makeWebTab(title: saved.title, systemImage: saved.systemImage,
+                        urlString: saved.urlString ?? "about:blank")
+    }
+  }
+
+  // MARK: Persistence
+
+  private func persist() {
+    var snapshot: [String: PersistedWorktreeTabs] = [:]
+    for (path, tabs) in tabsByWorktree {
+      let persistedTabs = tabs.map {
+        PersistedTab(kind: $0.kind, title: $0.title, systemImage: $0.systemImage,
+                     urlString: $0.webSession?.currentURLString)
+      }
+      let index = selection[path].flatMap { id in tabs.firstIndex { $0.id == id } }
+      snapshot[path] = PersistedWorktreeTabs(tabs: persistedTabs, selectedIndex: index)
+    }
+    guard let data = try? JSONEncoder().encode(snapshot) else { return }
+    UserDefaults.standard.set(data, forKey: Self.storageKey)
+  }
+
+  private static func loadPersisted() -> [String: PersistedWorktreeTabs] {
+    guard let data = UserDefaults.standard.data(forKey: storageKey),
+          let decoded = try? JSONDecoder().decode([String: PersistedWorktreeTabs].self, from: data)
+    else { return [:] }
+    return decoded
   }
 }

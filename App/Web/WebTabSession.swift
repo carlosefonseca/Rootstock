@@ -15,6 +15,10 @@ final class WebTabSession: NSObject {
   private(set) var isLoading = false
   private(set) var title: String?
 
+  /// Fired after each navigation settles, so the tab store can persist the
+  /// tab's latest URL without polling.
+  var onNavigate: (() -> Void)?
+
   init(urlString: String) {
     self.currentURLString = urlString
     self.webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
@@ -70,5 +74,6 @@ extension WebTabSession: WKNavigationDelegate {
     canGoForward = webView.canGoForward
     title = webView.title?.isEmpty == false ? webView.title : nil
     if let url = webView.url?.absoluteString { currentURLString = url }
+    onNavigate?()
   }
 }

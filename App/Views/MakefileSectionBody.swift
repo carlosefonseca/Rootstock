@@ -31,22 +31,30 @@ struct MakefileSectionBody: View {
           Button {
             runner.start("make \(target.name)", label: target.name, in: worktree.url)
           } label: {
-            HStack(spacing: 8) {
-              VStack(alignment: .leading, spacing: 1) {
-                Text(target.name).font(.callout.weight(.medium))
-                Text(target.help)
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
-                  .truncationMode(.tail)
-              }
-              Spacer(minLength: 0)
-              Image(systemName: "play.fill").font(.caption2).foregroundStyle(.tint)
+            // The play icon is pinned via a trailing overlay on the full-width
+            // label rather than an HStack + Spacer — with a Spacer, the icon's
+            // exact position could drift a few points row to row depending on
+            // how the button's intrinsic width interacted with long text; an
+            // overlay anchors it to the same edge regardless of content.
+            VStack(alignment: .leading, spacing: 1) {
+              Text(target.name).font(.callout.weight(.medium))
+              Text(target.help)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 6)
-            .padding(.horizontal, 8)
+            .padding(.leading, 8)
+            .padding(.trailing, 24)
             .contentShape(.rect)
+            .overlay(alignment: .trailing) {
+              Image(systemName: "play.fill")
+                .font(.caption2)
+                .foregroundStyle(.tint)
+                .padding(.trailing, 8)
+            }
           }
           .buttonStyle(.bordered)
           .frame(maxWidth: .infinity, alignment: .leading)

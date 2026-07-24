@@ -1,0 +1,65 @@
+import Foundation
+import SwiftTerm
+import AppKit
+
+/// One live PTY-backed terminal bound to a worktree. Wraps SwiftTerm's
+/// `LocalProcessTerminalView` so the same running process can be shown, detached,
+/// and shown again as the user switches worktrees or reopens the window.
+@MainActor
+final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDelegate {
+  let id: String            // session key (e.g. worktree path)
+  let directory: URL
+  let terminalView: LocalProcessTerminalView
+
+  private(set) var isRunning = false
+  private(set) var title: String
+  var onProcessExit: (() -> Void)?
+
+  init(id: String, directory: URL, title: String) {
+    self.id = id
+    self.directory = directory
+    self.title = title
+    self.terminalView = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
+    super.init()
+    terminalView.processDelegate = self
+  }
+
+  /// Starts an interactive login shell in the worktree directory. `initialCommand`,
+  /// if given, is typed in and run automatically (used to launch `opencode`).
+  func start(initialCommand: String? = nil) {
+    guard !isRunning else { return }
+    isRunning = true
+    var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
+    env.append("TERM_PROGRAM=Rootstock")
+    terminalView.startProcess(executable: "/bin/zsh", args: ["-il"],
+                              environment: env, currentDirectory: directory.path)
+    if let initialCommand, !initialCommand.isEmpty {
+      terminalView.send(txt: "\(initialCommand)\n")
+    }
+  }
+
+  func sendText(_ text: String) {
+    terminalView.send(txt: text)
+  }
+
+  func terminate() {
+    guard isRunning else { return }
+    terminalView.terminate()
+  }
+
+  // MARK: LocalProcessTerminalViewDelegate
+
+  nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
+    Task { @MainActor in
+      isRunning = false
+      onProcessExit?()
+    }
+  }
+
+  nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+    Task { @MainActor in if !title.isEmpty { self.title = title } }
+  }
+
+  nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+  nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+}

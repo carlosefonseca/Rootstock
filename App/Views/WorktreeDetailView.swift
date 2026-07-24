@@ -39,6 +39,7 @@ struct WorktreeDetailView: View {
 }
 
 private struct HeaderSection: View {
+  @Environment(\.openWindow) private var openWindow
   var worktree: WorktreeInfo
 
   var body: some View {
@@ -64,8 +65,18 @@ private struct HeaderSection: View {
 
       HStack {
         Button("Reveal in Finder", systemImage: "folder") { AppOpener.revealInFinder(worktree.url) }
-        Button("Terminal", systemImage: "terminal") { AppOpener.openInTerminal(worktree.url) }
+        Button("Terminal", systemImage: "terminal") {
+          openWindow(id: "terminal", value: worktree.path)
+        }
         Button("Fork", systemImage: "arrow.triangle.pull") { AppOpener.openInFork(worktree.url) }
+        Spacer()
+        Menu {
+          Button("Open in Terminal.app", systemImage: "terminal") { AppOpener.openInTerminal(worktree.url) }
+        } label: {
+          Label("More", systemImage: "ellipsis")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
       }
       .buttonStyle(.bordered)
       .controlSize(.small)

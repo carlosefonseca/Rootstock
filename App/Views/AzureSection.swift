@@ -37,9 +37,7 @@ struct AzureSection: View {
     guard !Task.isCancelled else { return }
     let clone = workspace.clone(forWorktree: worktree)
     let resolvedRemote = AzureRemote.parse(clone?.remoteURL)
-    let dcdp = clone.map { DcdpConfig.load(worktree: $0.rootURL) } ?? nil
-    let resolvedOrg = dcdp?.workItemOrg ?? AzureSettingsStore.defaultWorkItemOrg
-    let resolvedProject = dcdp?.workItemProject ?? AzureSettingsStore.defaultWorkItemProject
+    let (resolvedOrg, resolvedProject) = WorkItemLink.resolveOrgProject(clone: clone)
     await model.load(worktree: worktree, remote: resolvedRemote,
                      workItemOrg: resolvedOrg, workItemProject: resolvedProject)
   }
@@ -261,7 +259,9 @@ private struct WorkItemCard: View {
         Spacer()
         if let id {
           Button("Open", systemImage: "arrow.up.right.square") {
-            if let org = workItemOrg { AppOpener.open(workItemURL(org: org, id: id)) }
+            if let org = workItemOrg {
+              AppOpener.open(WorkItemLink.url(org: org, project: workItemProject, id: id))
+            }
           }
           .controlSize(.small).labelStyle(.iconOnly)
           .disabled(workItemOrg == nil)
@@ -287,17 +287,6 @@ private struct WorkItemCard: View {
         }
       }
     }
-  }
-
-  /// The org-only form (`/{org}/_workitems/edit/{id}`) 404s on this org — Azure
-  /// DevOps needs the project segment to resolve the work item, exactly as the
-  /// team's own `update_related_workitem_with_build.rb` builds it.
-  private func workItemURL(org: String, id: String) -> String {
-    guard let project = workItemProject, !project.isEmpty else {
-      return "https://dev.azure.com/\(org)/_workitems/edit/\(id)"
-    }
-    let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
-    return "https://dev.azure.com/\(org)/\(encodedProject)/_workitems/edit/\(id)"
   }
 }
 

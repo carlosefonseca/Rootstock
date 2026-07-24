@@ -43,8 +43,11 @@ private struct GeneralSettingsView: View {
         }
         .onChange(of: fontName) { NotificationCenter.default.post(name: .terminalFontChanged, object: nil) }
 
-        Stepper(value: $fontSize, in: 8...24, step: 1) {
-          Text("Font size: \(Int(fontSize)) pt")
+        LabeledContent("Font size") {
+          HStack(spacing: 6) {
+            Text("\(Int(fontSize)) pt").foregroundStyle(.secondary).monospacedDigit()
+            Stepper("", value: $fontSize, in: 8...24, step: 1).labelsHidden()
+          }
         }
         .onChange(of: fontSize) { NotificationCenter.default.post(name: .terminalFontChanged, object: nil) }
 

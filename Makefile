@@ -43,7 +43,10 @@ sparkle-tools: ## Downloads Sparkle's generate_appcast/sign_update CLI tools.
 		tar -xf /tmp/sparkle-tools.tar.xz -C .sparkle-tools; \
 	fi
 
-# `make release VERSION=1.1.0`
+# `make release VERSION=1.1.0` (add `PRERELEASE=1` to publish without moving
+# the Sparkle "latest" feed — existing installs won't be offered the update)
+GH_PRERELEASE_FLAG := $(if $(PRERELEASE),--prerelease,)
+
 release: sparkle-tools ## Builds, signs, notarizes, and publishes a GitHub release + Sparkle appcast.
 	@test -n "$(VERSION)" || (echo "Usage: make release VERSION=1.1.0"; exit 1)
 	@echo "==> Building Rootstock $(VERSION) (build $(BUILD_NUMBER))"
@@ -71,7 +74,7 @@ release: sparkle-tools ## Builds, signs, notarizes, and publishes a GitHub relea
 	gh release create "v$(VERSION)" \
 		"$(RELEASE_DIR)/archive/Rootstock-$(VERSION).zip" \
 		"$(RELEASE_DIR)/archive/appcast.xml" \
-		--repo "$(REPO)" --title "Rootstock $(VERSION)" --generate-notes
+		--repo "$(REPO)" --title "Rootstock $(VERSION)" --generate-notes $(GH_PRERELEASE_FLAG)
 	@echo "==> Done: https://github.com/$(REPO)/releases/tag/v$(VERSION)"
 
 clean: ## Removes build output.

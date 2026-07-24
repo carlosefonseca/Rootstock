@@ -32,10 +32,11 @@ struct AzureService {
     return list?.value.filter { $0.isUnresolved && ($0.comments?.contains { $0.commentType != "system" } ?? false) }.count ?? 0
   }
 
-  /// Build-validation statuses posted to a PR.
+  /// Build-validation statuses posted to a PR. This resource is preview-only.
   func prStatuses(remote: AzureRemote, prId: Int) async -> [ADOPRStatus] {
     let list = try? await client.get(ADOList<ADOPRStatus>.self, org: remote.org,
-      path: "\(repoPath(remote))/pullRequests/\(prId)/statuses")
+      path: "\(repoPath(remote))/pullRequests/\(prId)/statuses",
+      apiVersion: "7.0-preview.1")
     return list?.value ?? []
   }
 

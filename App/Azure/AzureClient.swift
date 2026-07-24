@@ -21,19 +21,22 @@ enum AzureError: LocalizedError {
 /// exists for Swift and the surface area (PRs, pipelines, work items, connection
 /// data) is tiny, so this is hand-rolled.
 struct AzureClient {
-  var apiVersion = "7.1"
+  /// GA across Azure DevOps Services and Server 2022. Some resources are only
+  /// available under a preview version — those calls pass an explicit
+  /// `apiVersion` (e.g. "7.0-preview.1").
+  var apiVersion = "7.0"
   private let session = URLSession(configuration: .ephemeral)
 
   /// GETs `path` under `org` (org is always the URL base here; `path` includes the
   /// project segment when needed). `query` is merged with the api-version.
   func get<T: Decodable>(_ type: T.Type, org: String, path: String,
-                         query: [String: String] = [:]) async throws -> T {
+                         query: [String: String] = [:], apiVersion: String? = nil) async throws -> T {
     guard let token = await AzureAuth.shared.token(forOrg: org) else {
       throw AzureError.noCredential(org: org)
     }
     var comps = URLComponents(string: "https://dev.azure.com/\(org)/\(path)")!
     var items = query.map { URLQueryItem(name: $0.key, value: $0.value) }
-    items.append(URLQueryItem(name: "api-version", value: apiVersion))
+    items.append(URLQueryItem(name: "api-version", value: apiVersion ?? self.apiVersion))
     comps.queryItems = items
 
     var request = URLRequest(url: comps.url!)

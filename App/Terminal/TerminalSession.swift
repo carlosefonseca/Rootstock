@@ -22,6 +22,11 @@ final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDel
     self.terminalView = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
     super.init()
     terminalView.processDelegate = self
+    terminalView.font = AppSettings.terminalFont()
+    NotificationCenter.default.addObserver(
+      forName: .terminalFontChanged, object: nil, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.terminalView.font = AppSettings.terminalFont() }
+    }
   }
 
   /// Starts an interactive login shell in the worktree directory. `initialCommand`,

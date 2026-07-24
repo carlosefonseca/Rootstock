@@ -2,25 +2,35 @@ import AppKit
 
 /// Small helpers for handing a worktree off to other tools in the workflow.
 enum AppOpener {
+  static let forkBundleID = "com.DanPristupov.Fork"
+
   static func revealInFinder(_ url: URL) {
     NSWorkspace.shared.activateFileViewerSelecting([url])
   }
 
+  /// Opens the worktree in the user's configured terminal app.
   static func openInTerminal(_ url: URL) {
-    let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-    NSWorkspace.shared.open([url], withApplicationAt: terminal,
+    NSWorkspace.shared.open([url], withApplicationAt: AppSettings.terminalAppURL,
                             configuration: NSWorkspace.OpenConfiguration())
   }
 
-  /// Opens the worktree in Fork if installed; falls back to revealing in Finder.
-  static func openInFork(_ url: URL) {
-    let fork = URL(fileURLWithPath: "/Applications/Fork.app")
-    if FileManager.default.fileExists(atPath: fork.path) {
-      NSWorkspace.shared.open([url], withApplicationAt: fork,
-                              configuration: NSWorkspace.OpenConfiguration())
-    } else {
-      revealInFinder(url)
+  /// The Fork app URL, or nil when Fork isn't installed.
+  static func forkAppURL() -> URL? {
+    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: forkBundleID) {
+      return url
     }
+    let fallback = URL(fileURLWithPath: "/Applications/Fork.app")
+    return FileManager.default.fileExists(atPath: fallback.path) ? fallback : nil
+  }
+
+  static func openInFork(_ url: URL) {
+    guard let fork = forkAppURL() else { return }
+    NSWorkspace.shared.open([url], withApplicationAt: fork,
+                            configuration: NSWorkspace.OpenConfiguration())
+  }
+
+  static func appIcon(_ url: URL) -> NSImage {
+    NSWorkspace.shared.icon(forFile: url.path)
   }
 
   static func open(_ urlString: String) {

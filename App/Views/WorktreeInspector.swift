@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The right-hand inspector: quick worktree context up top, then status, Makefile
-/// actions, config, and notes — the panel that used to be the whole detail view.
+/// The right-hand inspector: quick worktree context up top, then Azure DevOps,
+/// status, Makefile actions, and notes.
 struct WorktreeInspector: View {
   var worktree: WorktreeInfo
 
@@ -9,6 +9,8 @@ struct WorktreeInspector: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
         TopSection(worktree: worktree)
+
+        AzureSection(worktree: worktree)
 
         CollapsibleCard(title: "Status", systemImage: "chart.bar.doc.horizontal", stateKey: "status") {
           StatusSectionBody(worktree: worktree)
@@ -19,8 +21,6 @@ struct WorktreeInspector: View {
             MakefileSectionBody(worktree: worktree)
           }
         }
-
-        AzureSection(worktree: worktree)
 
         if let branch = worktree.branch {
           CollapsibleCard(title: "Notes", systemImage: "note.text", stateKey: "notes") {
@@ -33,15 +33,14 @@ struct WorktreeInspector: View {
   }
 }
 
-/// Header plus the most-used, always-visible controls: work item id and the
-/// Figma / Slack open buttons, with a button to open the full config editor.
+/// Header and quick actions. Work item / links live in the config editor now;
+/// this stays compact.
 private struct TopSection: View {
-  @Environment(WorkspaceModel.self) private var workspace
   var worktree: WorktreeInfo
 
   @State private var config = BranchConfig()
-  @State private var workItemID = ""
   @State private var showingEditor = false
+  private let forkURL = AppOpener.forkAppURL()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -59,51 +58,38 @@ private struct TopSection: View {
             .lineLimit(1)
         }
         Spacer(minLength: 0)
-      }
-
-      if worktree.branch != nil {
-        HStack(spacing: 6) {
-          Image(systemName: "number")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          TextField("Work item", text: $workItemID, prompt: Text("Work item ID"))
-            .textFieldStyle(.roundedBorder)
-            .font(.callout.monospaced())
-            .onSubmit { saveWorkItem() }
+        if worktree.branch != nil {
+          Button("Edit Config", systemImage: "slider.horizontal.3") { showingEditor = true }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
         }
-
-        HStack(spacing: 8) {
-          Button("Figma", systemImage: "paintbrush.pointed") {
-            if let url = config.figmaURL { AppOpener.open(url) }
-          }
-          .disabled((config.figmaURL ?? "").isEmpty)
-          Button("Slack", systemImage: "bubble.left.and.bubble.right") {
-            if let url = config.slackChannelURL { AppOpener.openSlack(url) }
-          }
-          .disabled((config.slackChannelURL ?? "").isEmpty)
-          Spacer()
-          Button("Edit…", systemImage: "slider.horizontal.3") { showingEditor = true }
-        }
-        .controlSize(.small)
-        .buttonStyle(.bordered)
       }
-
-      Divider()
 
       HStack(spacing: 8) {
         Button("Finder", systemImage: "folder") { AppOpener.revealInFinder(worktree.url) }
-        Button("Fork", systemImage: "arrow.triangle.pull") { AppOpener.openInFork(worktree.url) }
-        Button("Terminal.app", systemImage: "terminal") { AppOpener.openInTerminal(worktree.url) }
+        Button("Terminal", systemImage: "terminal") { AppOpener.openInTerminal(worktree.url) }
+        if let forkURL {
+          Button { AppOpener.openInFork(worktree.url) } label: {
+            Label {
+              Text("Fork")
+            } icon: {
+              Image(nsImage: AppOpener.appIcon(forkURL))
+                .resizable().frame(width: 15, height: 15)
+            }
+          }
+        }
+        Spacer()
+        if let figma = config.figmaURL, !figma.isEmpty {
+          Button("Figma", systemImage: "paintbrush.pointed") { AppOpener.open(figma) }
+            .labelStyle(.iconOnly)
+        }
+        if let slack = config.slackChannelURL, !slack.isEmpty {
+          Button("Slack", systemImage: "bubble.left.and.bubble.right") { AppOpener.openSlack(slack) }
+            .labelStyle(.iconOnly)
+        }
       }
       .controlSize(.small)
       .buttonStyle(.bordered)
-
-      Text(worktree.path)
-        .font(.caption2)
-        .foregroundStyle(.tertiary)
-        .textSelection(.enabled)
-        .lineLimit(1)
-        .truncationMode(.middle)
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -120,71 +106,92 @@ private struct TopSection: View {
   private func load() {
     guard let branch = worktree.branch else { return }
     config = BranchConfig.load(worktree: worktree.url, branch: branch)
-    workItemID = config.workItemID ?? ""
-  }
-
-  private func saveWorkItem() {
-    guard let branch = worktree.branch else { return }
-    var latest = BranchConfig.load(worktree: worktree.url, branch: branch)
-    latest.workItemID = workItemID.isEmpty ? nil : workItemID
-    try? latest.save(worktree: worktree.url, branch: branch)
-    config = latest
   }
 }
 
+/// Compact, sentence-style status: modified files, sync vs remote, sync vs parent.
 struct StatusSectionBody: View {
   @Environment(WorkspaceModel.self) private var workspace
   var worktree: WorktreeInfo
 
   var body: some View {
     let status = workspace.statuses[worktree.path] ?? WorktreeStatus()
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(spacing: 16) {
-        StatCell(value: "\(status.staged)", label: "Staged")
-        StatCell(value: "\(status.unstaged)", label: "Modified")
-        StatCell(value: "\(status.untracked)", label: "Untracked")
-        if status.conflicted > 0 {
-          StatCell(value: "\(status.conflicted)", label: "Conflicts", tint: .red)
-        }
-      }
-      HStack(spacing: 16) {
-        StatCell(value: "↑ \(status.ahead)", label: "Ahead")
-        StatCell(value: "↓ \(status.behind)", label: "Behind")
-        Spacer()
-      }
-      HStack {
+    VStack(alignment: .leading, spacing: 8) {
+      workingTreeRow(status)
+      remoteRow(status)
+      baseRow(status)
+
+      HStack(spacing: 8) {
         if let date = workspace.lastFetch[worktree.path] {
-          Label("Fetched \(date.formatted(.relative(presentation: .named)))", systemImage: "clock")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        } else {
-          Text("Never fetched").font(.caption).foregroundStyle(.secondary)
+          Text("Fetched \(date.formatted(.relative(presentation: .named)))")
+            .font(.caption2).foregroundStyle(.tertiary)
         }
         Spacer()
-        Button("Fetch", systemImage: "arrow.down.circle") {
-          Task { await workspace.fetch(worktree) }
-        }
-        .controlSize(.small)
-        Button("Reload", systemImage: "arrow.clockwise") {
-          Task { await workspace.reloadStatus(for: worktree) }
-        }
-        .controlSize(.small)
-        .labelStyle(.iconOnly)
+        Button("Fetch", systemImage: "arrow.down.circle") { Task { await workspace.fetch(worktree) } }
+          .controlSize(.small)
+        Button("Reload", systemImage: "arrow.clockwise") { Task { await workspace.reloadStatus(for: worktree) } }
+          .controlSize(.small).labelStyle(.iconOnly)
       }
+      .padding(.top, 2)
+    }
+  }
+
+  @ViewBuilder private func workingTreeRow(_ status: WorktreeStatus) -> some View {
+    if status.conflicted > 0 {
+      StatusLine(icon: "exclamationmark.triangle.fill", tint: .red,
+                 text: "\(status.conflicted) file\(status.conflicted == 1 ? "" : "s") in conflict")
+    } else if status.changedCount > 0 {
+      StatusLine(icon: "pencil.circle.fill", tint: .orange,
+                 text: "\(status.changedCount) modified file\(status.changedCount == 1 ? "" : "s") in the worktree")
+    } else {
+      StatusLine(icon: "checkmark.circle.fill", tint: .green, text: "Working tree is clean")
+    }
+  }
+
+  @ViewBuilder private func remoteRow(_ status: WorktreeStatus) -> some View {
+    if !status.hasUpstream {
+      StatusLine(icon: "arrow.up.arrow.down.circle", tint: .secondary, text: "No upstream branch set")
+    } else if status.remoteAhead == 0 && status.remoteBehind == 0 {
+      StatusLine(icon: "checkmark.circle", tint: .secondary, text: "In sync with its remote")
+    } else {
+      StatusLine(icon: "arrow.up.arrow.down.circle.fill", tint: .blue,
+                 text: "Branch is \(syncText(ahead: status.remoteAhead, behind: status.remoteBehind)) its remote")
+    }
+  }
+
+  @ViewBuilder private func baseRow(_ status: WorktreeStatus) -> some View {
+    if status.hasBase, let base = status.baseName {
+      if status.baseAhead == 0 && status.baseBehind == 0 {
+        StatusLine(icon: "arrow.triangle.branch", tint: .secondary, text: "Up to date with \(base)")
+      } else {
+        StatusLine(icon: "arrow.triangle.branch", tint: .purple,
+                   text: "Branch is \(syncText(ahead: status.baseAhead, behind: status.baseBehind)) \(base)")
+      }
+    } else {
+      StatusLine(icon: "arrow.triangle.branch", tint: .secondary,
+                 text: "No parent branch set (Edit Config)")
+    }
+  }
+
+  private func syncText(ahead: Int, behind: Int) -> String {
+    switch (ahead, behind) {
+    case let (a, 0) where a > 0: return "ahead \(a) of"
+    case let (0, b) where b > 0: return "behind \(b) of"
+    default: return "ahead \(ahead) / behind \(behind) of"
     }
   }
 }
 
-private struct StatCell: View {
-  var value: String
-  var label: String
-  var tint: Color = .primary
+private struct StatusLine: View {
+  var icon: String
+  var tint: Color
+  var text: String
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(value).font(.title3.weight(.semibold).monospacedDigit()).foregroundStyle(tint)
-      Text(label).font(.caption).foregroundStyle(.secondary)
+    HStack(spacing: 8) {
+      Image(systemName: icon).foregroundStyle(tint).frame(width: 18)
+      Text(text).font(.callout)
+      Spacer(minLength: 0)
     }
   }
 }
-

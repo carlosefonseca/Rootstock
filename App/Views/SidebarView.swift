@@ -102,8 +102,8 @@ struct WorktreeRow: View {
           .lineLimit(1)
       }
       Spacer(minLength: 0)
-      if let status, (status.ahead > 0 || status.behind > 0) {
-        AheadBehindBadge(ahead: status.ahead, behind: status.behind)
+      if let status, (status.remoteAhead > 0 || status.remoteBehind > 0) {
+        AheadBehindBadge(ahead: status.remoteAhead, behind: status.remoteBehind)
       }
     }
     .padding(.vertical, 2)

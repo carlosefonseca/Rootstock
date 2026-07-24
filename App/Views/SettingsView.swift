@@ -1,12 +1,86 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
   var body: some View {
     TabView {
+      GeneralSettingsView()
+        .tabItem { Label("General", systemImage: "gearshape") }
       AzureSettingsView()
         .tabItem { Label("Azure DevOps", systemImage: "cloud") }
     }
     .frame(width: 540, height: 460)
+  }
+}
+
+private struct GeneralSettingsView: View {
+  @AppStorage(AppSettings.terminalAppPathKey) private var terminalAppPath = AppSettings.defaultTerminalAppPath
+  @AppStorage(AppSettings.terminalFontNameKey) private var fontName = "Menlo"
+  @AppStorage(AppSettings.terminalFontSizeKey) private var fontSize = 12.0
+
+  @State private var terminalApps: [URL] = []
+
+  private let fontCandidates = ["Menlo", "Monaco", "SFMono-Regular", "Courier New",
+                                "Andale Mono", "Fira Code", "JetBrains Mono", "Hack",
+                                "Source Code Pro", "IBM Plex Mono"]
+
+  private var availableFonts: [String] {
+    var fonts = fontCandidates.filter { NSFont(name: $0, size: 12) != nil }
+    if !fonts.contains(fontName) { fonts.insert(fontName, at: 0) }
+    return fonts
+  }
+
+  var body: some View {
+    Form {
+      Section("Terminal") {
+        Picker("Open in", selection: $terminalAppPath) {
+          ForEach(terminalApps, id: \.path) { url in
+            Text(url.deletingPathExtension().lastPathComponent).tag(url.path)
+          }
+        }
+        Button("Choose Terminal App…") { chooseTerminalApp() }
+
+        Picker("Font", selection: $fontName) {
+          ForEach(availableFonts, id: \.self) { Text($0).tag($0) }
+        }
+        .onChange(of: fontName) { NotificationCenter.default.post(name: .terminalFontChanged, object: nil) }
+
+        Stepper(value: $fontSize, in: 8...24, step: 1) {
+          Text("Font size: \(Int(fontSize)) pt")
+        }
+        .onChange(of: fontSize) { NotificationCenter.default.post(name: .terminalFontChanged, object: nil) }
+
+        Text("The in-app terminal uses this font; changes apply to open sessions immediately.")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+    }
+    .formStyle(.grouped)
+    .task { loadTerminalApps() }
+  }
+
+  private func loadTerminalApps() {
+    let bundleIDs = ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty",
+                     "dev.warp.Warp-Stable", "net.kovidgoyal.kitty", "org.alacritty",
+                     "com.github.wez.wezterm"]
+    var urls = bundleIDs.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+    let current = URL(fileURLWithPath: terminalAppPath)
+    if !urls.contains(where: { $0.path == current.path }), FileManager.default.fileExists(atPath: current.path) {
+      urls.append(current)
+    }
+    terminalApps = urls
+  }
+
+  private func chooseTerminalApp() {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowedContentTypes = [.application]
+    panel.directoryURL = URL(fileURLWithPath: "/Applications")
+    panel.prompt = "Choose"
+    if panel.runModal() == .OK, let url = panel.url {
+      terminalAppPath = url.path
+      loadTerminalApps()
+    }
   }
 }
 

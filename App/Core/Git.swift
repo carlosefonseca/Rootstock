@@ -14,11 +14,20 @@ struct WorktreeInfo: Identifiable, Hashable {
   var displayBranch: String { branch ?? (isDetached ? "detached" : (isBare ? "bare" : "—")) }
 }
 
-/// Working-tree status derived from `git status --porcelain=v2 --branch`.
+/// Working-tree status derived from `git status --porcelain=v2 --branch`, with
+/// ahead/behind tracked separately for the remote upstream and the parent branch.
 struct WorktreeStatus: Hashable {
   var branch: String?
-  var ahead = 0
-  var behind = 0
+
+  var hasUpstream = false
+  var remoteAhead = 0
+  var remoteBehind = 0
+
+  var hasBase = false
+  var baseName: String?
+  var baseAhead = 0
+  var baseBehind = 0
+
   var staged = 0
   var unstaged = 0
   var untracked = 0
@@ -30,10 +39,13 @@ struct WorktreeStatus: Hashable {
   enum Dot: Hashable { case clean, dirty, ahead, behind, diverged, conflicted }
 
   /// The single dot shown in the sidebar, prioritising the most urgent signal.
+  /// Ahead/behind uses the upstream when present, otherwise the parent branch.
   var dot: Dot {
     if conflicted > 0 { return .conflicted }
-    if ahead > 0 && behind > 0 { return .diverged }
     if !isClean { return .dirty }
+    let ahead = hasUpstream ? remoteAhead : baseAhead
+    let behind = hasUpstream ? remoteBehind : baseBehind
+    if ahead > 0 && behind > 0 { return .diverged }
     if ahead > 0 { return .ahead }
     if behind > 0 { return .behind }
     return .clean
@@ -104,10 +116,11 @@ enum Git {
       if line.hasPrefix("# branch.head ") {
         status.branch = String(line.dropFirst("# branch.head ".count))
       } else if line.hasPrefix("# branch.ab ") {
+        status.hasUpstream = true
         let parts = line.dropFirst("# branch.ab ".count).split(separator: " ")
         for part in parts {
-          if part.hasPrefix("+") { status.ahead = Int(part.dropFirst()) ?? 0 }
-          if part.hasPrefix("-") { status.behind = Int(part.dropFirst()) ?? 0 }
+          if part.hasPrefix("+") { status.remoteAhead = Int(part.dropFirst()) ?? 0 }
+          if part.hasPrefix("-") { status.remoteBehind = Int(part.dropFirst()) ?? 0 }
         }
       } else if line.hasPrefix("1 ") || line.hasPrefix("2 ") {
         // XY field: index 2..<4, e.g. "M." staged, ".M" unstaged.
@@ -123,16 +136,17 @@ enum Git {
       }
     }
 
-    // Prefer an explicit base branch for ahead/behind; otherwise keep the
-    // tracking-branch numbers that porcelain already reported.
+    // Ahead/behind versus the configured parent branch, in addition to the remote.
     if let base, !base.isEmpty {
+      status.hasBase = true
+      status.baseName = base.replacingOccurrences(of: "origin/", with: "")
       let rev = await ShellRunner.run(
         "git rev-list --left-right --count \(base)...HEAD", in: directory)
       if rev.succeeded {
         let parts = rev.trimmedOut.split(whereSeparator: { $0 == "\t" || $0 == " " })
         if parts.count == 2 {
-          status.behind = Int(parts[0]) ?? status.behind
-          status.ahead = Int(parts[1]) ?? status.ahead
+          status.baseBehind = Int(parts[0]) ?? 0
+          status.baseAhead = Int(parts[1]) ?? 0
         }
       }
     }

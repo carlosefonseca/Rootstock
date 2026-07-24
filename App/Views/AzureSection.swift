@@ -12,17 +12,12 @@ struct AzureSection: View {
 
   var body: some View {
     CollapsibleCard(title: "Azure DevOps", systemImage: "cloud", stateKey: "azure") {
-      VStack(alignment: .leading, spacing: 12) {
-        content
-        if model.phase != .notConfigured {
-          HStack {
-            Spacer()
-            Button("Reload", systemImage: "arrow.clockwise") { Task { await reload() } }
-              .controlSize(.small)
-              .labelStyle(.iconOnly)
-          }
-        }
+      if model.phase != .notConfigured {
+        Button("Reload", systemImage: "arrow.clockwise") { Task { await reload() } }
+          .controlSize(.small).labelStyle(.iconOnly).buttonStyle(.borderless)
       }
+    } content: {
+      content
     }
     .task(id: worktree.path) { await reload() }
   }

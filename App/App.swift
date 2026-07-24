@@ -20,13 +20,5 @@ struct RootstockApp: App {
           .keyboardShortcut("r", modifiers: .command)
       }
     }
-
-    WindowGroup(id: "terminal", for: String.self) { $path in
-      if let path {
-        TerminalWindowView(path: path)
-          .environment(workspace)
-          .environment(terminals)
-      }
-    }
   }
 }

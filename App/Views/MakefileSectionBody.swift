@@ -4,37 +4,62 @@ struct MakefileSectionBody: View {
   var worktree: WorktreeInfo
   @State private var targets: [MakeTarget] = []
   @State private var runner = CommandRunner()
+  @State private var expanded = false
 
-  private let columns = [GridItem(.adaptive(minimum: 150), spacing: 8)]
+  /// Targets the team reaches for most, surfaced first when collapsed.
+  private static let priority = ["setup", "open"]
+  private static let collapsedCount = 4
+
+  private var ordered: [MakeTarget] {
+    let priorityTargets = Self.priority.compactMap { name in targets.first { $0.name == name } }
+    let rest = targets.filter { !Self.priority.contains($0.name) }
+    return priorityTargets + rest
+  }
+
+  private var visible: [MakeTarget] {
+    expanded ? ordered : Array(ordered.prefix(Self.collapsedCount))
+  }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
+    VStack(alignment: .leading, spacing: 8) {
       if targets.isEmpty {
         Text("No documented targets found. Add `## description` comments to Makefile targets.")
           .font(.caption)
           .foregroundStyle(.secondary)
       } else {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-          ForEach(targets) { target in
-            Button {
-              runner.start("make \(target.name)", label: target.name, in: worktree.url)
-            } label: {
-              VStack(alignment: .leading, spacing: 2) {
+        ForEach(visible) { target in
+          Button {
+            runner.start("make \(target.name)", label: target.name, in: worktree.url)
+          } label: {
+            HStack(spacing: 8) {
+              VStack(alignment: .leading, spacing: 1) {
                 Text(target.name).font(.callout.weight(.medium))
                 Text(target.help)
                   .font(.caption2)
                   .foregroundStyle(.secondary)
-                  .lineLimit(2)
-                  .multilineTextAlignment(.leading)
+                  .lineLimit(1)
+                  .truncationMode(.tail)
               }
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(8)
-              .contentShape(.rect)
+              Spacer(minLength: 0)
+              Image(systemName: "play.fill").font(.caption2).foregroundStyle(.tint)
             }
-            .buttonStyle(.bordered)
-            .disabled(runner.isRunning)
-            .help(target.help)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .contentShape(.rect)
           }
+          .buttonStyle(.bordered)
+          .disabled(runner.isRunning)
+          .help(target.help)
+        }
+
+        if ordered.count > Self.collapsedCount {
+          Button(expanded ? "Show fewer" : "Show \(ordered.count - Self.collapsedCount) more…") {
+            withAnimation(.snappy) { expanded.toggle() }
+          }
+          .buttonStyle(.plain)
+          .font(.caption)
+          .foregroundStyle(.tint)
         }
       }
 
@@ -42,7 +67,7 @@ struct MakefileSectionBody: View {
         CommandOutputPanel(runner: runner, worktree: worktree)
       }
     }
-    .task {
+    .task(id: worktree.path) {
       targets = MakefileParser.targets(in: worktree.url)
     }
   }

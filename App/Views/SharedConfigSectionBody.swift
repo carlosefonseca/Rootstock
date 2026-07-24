@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Reads and writes the tracked `Scripts/branch-sync/<branch>.conf` — shared with
+/// Editor sheet for the tracked `Scripts/branch-sync/<branch>.conf` — shared with
 /// teammates on the same branch and with `branch-sync.sh` itself.
-struct SharedConfigSectionBody: View {
+struct SharedConfigEditor: View {
   @Environment(WorkspaceModel.self) private var workspace
+  @Environment(\.dismiss) private var dismiss
   var worktree: WorktreeInfo
   var branch: String
 
@@ -22,32 +23,45 @@ struct SharedConfigSectionBody: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Field(title: "Base branch (PRJ_DEP)", text: $baseBranch, prompt: "develop")
-      Field(title: "Work item ID", text: $workItemID, prompt: "205552")
+    VStack(alignment: .leading, spacing: 0) {
+      Text("Shared Config").font(.title2.weight(.semibold)).padding([.horizontal, .top], 20)
+      Text(BranchConfig.fileName(forBranch: branch))
+        .font(.caption.monospaced()).foregroundStyle(.secondary)
+        .padding(.horizontal, 20)
 
-      LinkField(title: "Figma", text: $figmaURL, prompt: "https://figma.com/…") {
-        AppOpener.open(figmaURL)
+      Form {
+        Section {
+          Field(title: "Base branch (PRJ_DEP)", text: $baseBranch, prompt: "develop")
+          Field(title: "Work item ID", text: $workItemID, prompt: "205552")
+        }
+        Section("Links") {
+          LinkField(title: "Figma", text: $figmaURL, prompt: "https://figma.com/…") {
+            AppOpener.open(figmaURL)
+          }
+          LinkField(title: "Slack channel", text: $slackURL, prompt: "https://…slack.com/archives/…") {
+            AppOpener.openSlack(slackURL)
+          }
+        }
+        if let saveError {
+          Label(saveError, systemImage: "exclamationmark.triangle")
+            .font(.caption).foregroundStyle(.red)
+        }
       }
-      LinkField(title: "Slack channel", text: $slackURL, prompt: "https://…slack.com/archives/…") {
-        openSlack(slackURL)
-      }
+      .formStyle(.grouped)
 
-      if let saveError {
-        Label(saveError, systemImage: "exclamationmark.triangle")
-          .font(.caption).foregroundStyle(.red)
-      }
-
+      Divider()
       HStack {
-        Text(BranchConfig.fileName(forBranch: branch))
-          .font(.caption2.monospaced())
-          .foregroundStyle(.tertiary)
+        Text("Shared with your team via git")
+          .font(.caption).foregroundStyle(.secondary)
         Spacer()
-        Button("Save", systemImage: "square.and.arrow.down") { save() }
-          .controlSize(.small)
+        Button("Cancel") { dismiss() }
+        Button("Save") { save() }
+          .keyboardShortcut(.defaultAction)
           .disabled(!isDirty)
       }
+      .padding(16)
     }
+    .frame(width: 460, height: 460)
     .task { load() }
   }
 
@@ -60,32 +74,18 @@ struct SharedConfigSectionBody: View {
   }
 
   private func save() {
-    var config = BranchConfig.load(worktree: worktree.url, branch: branch) // re-read to keep passthrough
+    var config = BranchConfig.load(worktree: worktree.url, branch: branch) // keep passthrough lines
     config.prjDep = baseBranch.isEmpty ? nil : baseBranch
     config.workItemID = workItemID.isEmpty ? nil : workItemID
     config.figmaURL = figmaURL.isEmpty ? nil : figmaURL
     config.slackChannelURL = slackURL.isEmpty ? nil : slackURL
     do {
       try config.save(worktree: worktree.url, branch: branch)
-      saveError = nil
-      loaded = config
       Task { await workspace.reloadStatus(for: worktree) } // base branch may have changed
+      dismiss()
     } catch {
       saveError = error.localizedDescription
     }
-  }
-
-  private func openSlack(_ urlString: String) {
-    // Prefer the native Slack app via its archive deep link when possible.
-    if let comps = URLComponents(string: urlString),
-       let last = comps.path.split(separator: "/").last,
-       last.hasPrefix("C") || last.hasPrefix("G") {
-      if let deep = URL(string: "slack://channel?id=\(last)") {
-        AppOpener.open(deep.absoluteString)
-        return
-      }
-    }
-    AppOpener.open(urlString)
   }
 }
 
@@ -98,7 +98,6 @@ private struct Field: View {
     VStack(alignment: .leading, spacing: 3) {
       Text(title).font(.caption).foregroundStyle(.secondary)
       TextField(title, text: $text, prompt: Text(prompt))
-        .textFieldStyle(.roundedBorder)
         .labelsHidden()
     }
   }
@@ -115,7 +114,6 @@ private struct LinkField: View {
       Text(title).font(.caption).foregroundStyle(.secondary)
       HStack {
         TextField(title, text: $text, prompt: Text(prompt))
-          .textFieldStyle(.roundedBorder)
           .labelsHidden()
         Button("Open \(title)", systemImage: "arrow.up.right.square") { open() }
           .labelStyle(.iconOnly)

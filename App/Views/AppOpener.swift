@@ -27,4 +27,16 @@ enum AppOpener {
     guard let url = URL(string: urlString) else { return }
     NSWorkspace.shared.open(url)
   }
+
+  /// Opens a Slack channel URL via the native app deep link when the archive id
+  /// is recognisable, falling back to the web URL.
+  static func openSlack(_ urlString: String) {
+    if let comps = URLComponents(string: urlString),
+       let last = comps.path.split(separator: "/").last,
+       last.hasPrefix("C") || last.hasPrefix("G") {
+      open("slack://channel?id=\(last)")
+      return
+    }
+    open(urlString)
+  }
 }

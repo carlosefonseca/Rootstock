@@ -15,9 +15,19 @@ final class WorkspaceModel {
   private(set) var lastFetch: [String: Date] = [:]
   private(set) var refreshing = false
 
-  var selectedPath: String?
+  /// Persisted so the same worktree is showing (and its Azure/status data
+  /// re-fetched fresh from disk) the next time the app launches, instead of
+  /// starting on an empty detail pane every time.
+  var selectedPath: String? {
+    didSet { UserDefaults.standard.set(selectedPath, forKey: Self.selectedPathKey) }
+  }
+  private static let selectedPathKey = "workspace.selectedPath"
 
   @ObservationIgnored private var context: ModelContext?
+
+  init() {
+    selectedPath = UserDefaults.standard.string(forKey: Self.selectedPathKey)
+  }
 
   func configure(_ context: ModelContext) {
     guard self.context == nil else { return }

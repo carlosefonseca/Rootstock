@@ -18,6 +18,7 @@ final class WorktreeAzureModel {
     enum State { case succeeded, failed, running, none }
     var state: State
     var url: String?
+    var label: String? = nil
   }
 
   private(set) var phase: Phase = .idle
@@ -28,38 +29,70 @@ final class WorktreeAzureModel {
   private(set) var workItemID: String?
   private(set) var workItemGuessed = false
 
+  // The resolved context for the current load, held here (not as separate @State
+  // on AzureSection) so it's part of the same Observable graph as `phase` and
+  // updates in the same transaction — the view was seeing these desync from
+  // `phase`/`workItemID` when they lived on split @State/@Observable storage.
+  private(set) var remote: AzureRemote?
+  private(set) var workItemOrg: String?
+  private(set) var workItemProject: String?
+
   private let service = AzureService()
 
   /// Loads everything for `worktree`. `remote` is parsed from the clone's origin;
   /// `workItemOrg`/`workItemProject` come from `.dcdp/config.toml` or the user's
   /// defaults (falling back to the code org).
+  ///
+  /// Work-item resolution runs independently of the PR/pipeline fetch: the work
+  /// item can live in a different org than the code (see the two-org setup), so a
+  /// `WORK_ITEM_ID` already recorded in the branch's shared conf should fetch its
+  /// details even when the code remote doesn't resolve or the PR call fails.
   func load(worktree: WorktreeInfo, remote: AzureRemote?, workItemOrg: String?, workItemProject: String?) async {
-    guard let remote, let branch = worktree.branch else {
+    self.remote = remote
+    self.workItemOrg = workItemOrg
+    self.workItemProject = workItemProject
+    guard let branch = worktree.branch else {
       phase = .notConfigured
       return
     }
     phase = .loading
-    do {
-      let pull = try await service.pullRequest(remote: remote, branch: branch)
-      self.pr = pull
 
-      if let pull {
-        async let unresolved = service.unresolvedCommentCount(remote: remote, prId: pull.pullRequestId)
-        async let statuses = service.prStatuses(remote: remote, prId: pull.pullRequestId)
-        async let build = service.latestBuild(remote: remote, branch: branch)
-        self.unresolved = await unresolved
-        self.pipeline = pipeline(from: await statuses, build: await build)
-      } else {
+    var prFailure: Error?
+    if let remote {
+      do {
+        let pull = try await service.pullRequest(remote: remote, branch: branch)
+        self.pr = pull
+        if let pull {
+          async let unresolved = service.unresolvedCommentCount(remote: remote, prId: pull.pullRequestId)
+          async let build = service.latestBuild(remote: remote, branch: branch)
+          self.unresolved = await unresolved
+          self.pipeline = pipeline(from: await build)
+        } else {
+          self.unresolved = 0
+          self.pipeline = pipeline(from: await service.latestBuild(remote: remote, branch: branch))
+        }
+      } catch {
+        prFailure = error
+        self.pr = nil
         self.unresolved = 0
-        self.pipeline = pipeline(from: [], build: await service.latestBuild(remote: remote, branch: branch))
+        self.pipeline = Pipeline(state: .none, url: nil)
       }
+    } else {
+      self.pr = nil
+      self.unresolved = 0
+      self.pipeline = Pipeline(state: .none, url: nil)
+    }
 
-      await resolveWorkItem(worktree: worktree, branch: branch, remote: remote,
-                            workItemOrg: workItemOrg, workItemProject: workItemProject,
-                            prDescription: pull?.description)
+    await resolveWorkItem(worktree: worktree, branch: branch, remote: remote,
+                          workItemOrg: workItemOrg, workItemProject: workItemProject,
+                          prDescription: pr?.description)
+
+    if remote == nil && workItemID == nil {
+      phase = .notConfigured
+    } else if let prFailure, workItemID == nil {
+      phase = .failed(prFailure.localizedDescription)
+    } else {
       phase = .loaded
-    } catch {
-      phase = .failed(error.localizedDescription)
     }
   }
 
@@ -72,7 +105,7 @@ final class WorktreeAzureModel {
     workItemGuessed = false
   }
 
-  private func resolveWorkItem(worktree: WorktreeInfo, branch: String, remote: AzureRemote,
+  private func resolveWorkItem(worktree: WorktreeInfo, branch: String, remote: AzureRemote?,
                                workItemOrg: String?, workItemProject: String?, prDescription: String?) async {
     let config = BranchConfig.load(worktree: worktree.url, branch: branch)
     guard let resolution = WorkItemResolver.resolve(
@@ -91,25 +124,23 @@ final class WorktreeAzureModel {
       try? updated.save(worktree: worktree.url, branch: branch)
     }
 
-    let org = workItemOrg ?? remote.org
+    guard let org = workItemOrg ?? remote?.org else {
+      workItem = nil
+      return
+    }
     workItem = try? await service.workItem(org: org, project: workItemProject, id: resolution.id)
   }
 
-  private func pipeline(from statuses: [ADOPRStatus], build: ADOBuild?) -> Pipeline {
-    // Prefer PR build-validation statuses when present.
-    if !statuses.isEmpty {
-      let states = statuses.compactMap { $0.state?.lowercased() }
-      let url = statuses.first?.targetUrl
-      if states.contains("failed") || states.contains("error") { return Pipeline(state: .failed, url: url) }
-      if states.contains("pending") { return Pipeline(state: .running, url: url) }
-      if states.allSatisfy({ $0 == "succeeded" || $0 == "notapplicable" }) { return Pipeline(state: .succeeded, url: url) }
-    }
-    guard let build else { return Pipeline(state: .none, url: nil) }
-    if build.status != "completed" { return Pipeline(state: .running, url: build.webURL) }
+  /// The latest pipeline build for the branch — always carries a working link
+  /// when a build exists, unlike PR-level statuses which aren't guaranteed one.
+  private func pipeline(from build: ADOBuild?) -> Pipeline {
+    guard let build else { return Pipeline(state: .none, url: nil, label: nil) }
+    let label = "Build #\(build.buildNumber ?? String(build.id))"
+    if build.status != "completed" { return Pipeline(state: .running, url: build.webURL, label: label) }
     switch build.result {
-    case "succeeded", "partiallySucceeded": return Pipeline(state: .succeeded, url: build.webURL)
-    case "failed", "canceled": return Pipeline(state: .failed, url: build.webURL)
-    default: return Pipeline(state: .none, url: build.webURL)
+    case "succeeded", "partiallySucceeded": return Pipeline(state: .succeeded, url: build.webURL, label: label)
+    case "failed", "canceled": return Pipeline(state: .failed, url: build.webURL, label: label)
+    default: return Pipeline(state: .none, url: build.webURL, label: label)
     }
   }
 }

@@ -8,6 +8,11 @@ enum AzureSettingsStore {
   private static let defaultWorkItemOrgKey = "azure.defaultWorkItemOrg"
   private static let defaultWorkItemProjectKey = "azure.defaultWorkItemProject"
 
+  /// The team's actual work-item org/project — shown pre-filled in Settings and
+  /// used whenever the field is left empty, rather than a placeholder nobody reads.
+  static let defaultWorkItemOrgFallback = "CASDevOps"
+  static let defaultWorkItemProjectFallback = "CA Entrega"
+
   /// How Rootstock authenticates to an org.
   enum AuthMode: String, CaseIterable, Identifiable {
     case auto   // PAT if stored, otherwise az
@@ -54,11 +59,11 @@ enum AzureSettingsStore {
 
   static var defaultWorkItemOrg: String? {
     let value = UserDefaults.standard.string(forKey: defaultWorkItemOrgKey)
-    return (value?.isEmpty ?? true) ? nil : value
+    return (value?.isEmpty ?? true) ? defaultWorkItemOrgFallback : value
   }
 
   static var defaultWorkItemProject: String? {
     let value = UserDefaults.standard.string(forKey: defaultWorkItemProjectKey)
-    return (value?.isEmpty ?? true) ? nil : value
+    return (value?.isEmpty ?? true) ? defaultWorkItemProjectFallback : value
   }
 }

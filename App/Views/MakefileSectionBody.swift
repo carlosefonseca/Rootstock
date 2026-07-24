@@ -49,6 +49,7 @@ struct MakefileSectionBody: View {
             .contentShape(.rect)
           }
           .buttonStyle(.bordered)
+          .frame(maxWidth: .infinity, alignment: .leading)
           .disabled(runner.isRunning)
           .help(target.help)
         }

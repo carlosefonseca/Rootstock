@@ -19,15 +19,22 @@ private struct GeneralSettingsView: View {
   @AppStorage(AppSettings.terminalFontSizeKey) private var fontSize = 12.0
 
   @State private var terminalApps: [URL] = []
+  @State private var monospacedFonts: [String] = []
 
-  private let fontCandidates = ["Menlo", "Monaco", "SFMono-Regular", "Courier New",
-                                "Andale Mono", "Fira Code", "JetBrains Mono", "Hack",
-                                "Source Code Pro", "IBM Plex Mono"]
+  private static let chooseOtherTag = "__choose_other__"
+
+  /// Every fixed-pitch font actually installed — including any Nerd Fonts — not a
+  /// curated shortlist. Filtered to monospaced since a terminal needs a fixed grid.
+  private static func loadMonospacedFonts() -> [String] {
+    NSFontManager.shared.availableFonts
+      .filter { NSFont(name: $0, size: 12)?.isFixedPitch == true }
+      .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+  }
 
   private var availableFonts: [String] {
-    var fonts = fontCandidates.filter { NSFont(name: $0, size: 12) != nil }
-    if !fonts.contains(fontName) { fonts.insert(fontName, at: 0) }
-    return fonts
+    var fonts = monospacedFonts
+    if !fonts.isEmpty, !fonts.contains(fontName) { fonts.insert(fontName, at: 0) }
+    return fonts.isEmpty ? [fontName] : fonts
   }
 
   var body: some View {
@@ -37,11 +44,18 @@ private struct GeneralSettingsView: View {
           ForEach(terminalApps, id: \.path) { url in
             Text(url.deletingPathExtension().lastPathComponent).tag(url.path)
           }
+          Divider()
+          Text("Other…").tag(Self.chooseOtherTag)
         }
-        Button("Choose Terminal App…") { chooseTerminalApp() }
+        .onChange(of: terminalAppPath) { oldValue, newValue in
+          guard newValue == Self.chooseOtherTag else { return }
+          chooseTerminalApp(fallback: oldValue)
+        }
 
         Picker("Font", selection: $fontName) {
-          ForEach(availableFonts, id: \.self) { Text($0).tag($0) }
+          ForEach(availableFonts, id: \.self) { name in
+            Text(name).font(.custom(name, size: 13)).tag(name)
+          }
         }
         .onChange(of: fontName) { NotificationCenter.default.post(name: .terminalFontChanged, object: nil) }
 
@@ -55,7 +69,10 @@ private struct GeneralSettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .task { loadTerminalApps() }
+    .task {
+      loadTerminalApps()
+      if monospacedFonts.isEmpty { monospacedFonts = Self.loadMonospacedFonts() }
+    }
   }
 
   private func loadTerminalApps() {
@@ -70,7 +87,7 @@ private struct GeneralSettingsView: View {
     terminalApps = urls
   }
 
-  private func chooseTerminalApp() {
+  private func chooseTerminalApp(fallback: String) {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = false
     panel.canChooseFiles = true
@@ -80,6 +97,8 @@ private struct GeneralSettingsView: View {
     if panel.runModal() == .OK, let url = panel.url {
       terminalAppPath = url.path
       loadTerminalApps()
+    } else {
+      terminalAppPath = fallback
     }
   }
 }
@@ -89,8 +108,8 @@ private struct AzureSettingsView: View {
   @State private var orgs: [String] = []
   @State private var azAvailable: Bool?
   @State private var newOrg = ""
-  @AppStorage("azure.defaultWorkItemOrg") private var defaultWorkItemOrg = ""
-  @AppStorage("azure.defaultWorkItemProject") private var defaultWorkItemProject = ""
+  @AppStorage("azure.defaultWorkItemOrg") private var defaultWorkItemOrg = AzureSettingsStore.defaultWorkItemOrgFallback
+  @AppStorage("azure.defaultWorkItemProject") private var defaultWorkItemProject = AzureSettingsStore.defaultWorkItemProjectFallback
 
   var body: some View {
     Form {

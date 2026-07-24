@@ -75,14 +75,6 @@ struct ADOBuild: Decodable, Identifiable {
   var webURL: String? { _links?.web?.href }
 }
 
-/// PR build-validation status entry (`.../pullrequests/{id}/statuses`).
-struct ADOPRStatus: Decodable {
-  var state: String?            // succeeded / failed / pending / notApplicable / error
-  var targetUrl: String?
-  var context: Context?
-  struct Context: Decodable { var name: String?; var genre: String? }
-}
-
 // MARK: Work items
 
 struct ADOWorkItem: Decodable, Identifiable {

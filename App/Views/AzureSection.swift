@@ -6,30 +6,42 @@ struct AzureSection: View {
   var worktree: WorktreeInfo
 
   @State private var model = WorktreeAzureModel()
-  @State private var remote: AzureRemote?
-  @State private var workItemOrg: String?
-  @State private var workItemProject: String?
+  /// Guards against overlapping reloads — the initial `.task`, the manual Reload
+  /// button, and the config-change notification can all trigger one independently.
+  /// Without this, an in-flight reload racing a newer one could finish last and
+  /// apply stale results.
+  @State private var reloadTask: Task<Void, Never>?
 
   var body: some View {
     CollapsibleCard(title: "Azure DevOps", systemImage: "cloud", stateKey: "azure") {
       if model.phase != .notConfigured {
-        Button("Reload", systemImage: "arrow.clockwise") { Task { await reload() } }
+        Button("Reload", systemImage: "arrow.clockwise") { startReload() }
           .controlSize(.small).labelStyle(.iconOnly).buttonStyle(.borderless)
       }
     } content: {
       content
     }
-    .task(id: worktree.path) { await reload() }
+    .task(id: worktree.path) { startReload() }
+    .onReceive(NotificationCenter.default.publisher(for: .branchConfigChanged)) { _ in
+      startReload()
+    }
+    .onDisappear { reloadTask?.cancel() }
+  }
+
+  private func startReload() {
+    reloadTask?.cancel()
+    reloadTask = Task { await reload() }
   }
 
   private func reload() async {
+    guard !Task.isCancelled else { return }
     let clone = workspace.clone(forWorktree: worktree)
-    remote = AzureRemote.parse(clone?.remoteURL)
+    let resolvedRemote = AzureRemote.parse(clone?.remoteURL)
     let dcdp = clone.map { DcdpConfig.load(worktree: $0.rootURL) } ?? nil
-    workItemOrg = dcdp?.workItemOrg ?? AzureSettingsStore.defaultWorkItemOrg
-    workItemProject = dcdp?.workItemProject ?? AzureSettingsStore.defaultWorkItemProject
-    await model.load(worktree: worktree, remote: remote,
-                     workItemOrg: workItemOrg, workItemProject: workItemProject)
+    let resolvedOrg = dcdp?.workItemOrg ?? AzureSettingsStore.defaultWorkItemOrg
+    let resolvedProject = dcdp?.workItemProject ?? AzureSettingsStore.defaultWorkItemProject
+    await model.load(worktree: worktree, remote: resolvedRemote,
+                     workItemOrg: resolvedOrg, workItemProject: resolvedProject)
   }
 
   @ViewBuilder private var content: some View {
@@ -52,12 +64,12 @@ struct AzureSection: View {
   }
 
   @ViewBuilder private var loadedContent: some View {
-    PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipeline: model.pipeline, remote: remote,
+    PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipeline: model.pipeline, remote: model.remote,
                     branch: worktree.branch)
     if model.workItemID != nil {
       Divider()
       WorkItemCard(item: model.workItem, id: model.workItemID, guessed: model.workItemGuessed,
-                   workItemOrg: workItemOrg ?? remote?.org,
+                   workItemOrg: model.workItemOrg ?? model.remote?.org, workItemProject: model.workItemProject,
                    onConfirm: {
                      if let branch = worktree.branch { model.confirmWorkItem(worktree: worktree, branch: branch) }
                    })
@@ -200,7 +212,9 @@ private struct PipelinePill: View {
       }
       .buttonStyle(.plain)
       .foregroundStyle(tint)
-      .help("Latest pipeline: \(text)")
+      .help(pipeline.url != nil
+            ? "\(pipeline.label ?? "Latest pipeline") — \(text). Click to open."
+            : "\(pipeline.label ?? "Latest pipeline") — \(text)")
     }
   }
 
@@ -237,6 +251,7 @@ private struct WorkItemCard: View {
   var id: String?
   var guessed: Bool
   var workItemOrg: String?
+  var workItemProject: String?
   var onConfirm: () -> Void
 
   var body: some View {
@@ -246,11 +261,10 @@ private struct WorkItemCard: View {
         Spacer()
         if let id {
           Button("Open", systemImage: "arrow.up.right.square") {
-            if let org = workItemOrg {
-              AppOpener.open("https://dev.azure.com/\(org)/_workitems/edit/\(id)")
-            }
+            if let org = workItemOrg { AppOpener.open(workItemURL(org: org, id: id)) }
           }
           .controlSize(.small).labelStyle(.iconOnly)
+          .disabled(workItemOrg == nil)
         }
       }
 
@@ -273,6 +287,17 @@ private struct WorkItemCard: View {
         }
       }
     }
+  }
+
+  /// The org-only form (`/{org}/_workitems/edit/{id}`) 404s on this org — Azure
+  /// DevOps needs the project segment to resolve the work item, exactly as the
+  /// team's own `update_related_workitem_with_build.rb` builds it.
+  private func workItemURL(org: String, id: String) -> String {
+    guard let project = workItemProject, !project.isEmpty else {
+      return "https://dev.azure.com/\(org)/_workitems/edit/\(id)"
+    }
+    let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+    return "https://dev.azure.com/\(org)/\(encodedProject)/_workitems/edit/\(id)"
   }
 }
 

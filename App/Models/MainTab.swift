@@ -10,6 +10,7 @@ enum MainTabKind: Equatable {
 /// Owns its session directly so the tab's lifetime *is* the session's lifetime;
 /// no separate app-wide session registry to keep in sync.
 @Observable
+@MainActor
 final class MainTab: Identifiable {
   let id = UUID()
   let kind: MainTabKind

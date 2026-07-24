@@ -54,16 +54,21 @@ struct MainTabBarView: View {
     .padding(.vertical, 5)
   }
 
+  // Each tab's pane is forced to a fresh identity keyed by the tab itself —
+  // otherwise SwiftUI sees the same view type at the same tree position across
+  // a tab switch and *updates* it instead of remounting, which for a
+  // NSViewRepresentable wrapping a pre-existing, per-session NSView means the
+  // old tab's WKWebView/terminal view just stays on screen forever.
   @ViewBuilder private var content: some View {
     if let tab = selectedTab {
       switch tab.kind {
       case .terminal:
         if let session = tab.terminalSession {
-          TerminalTabPane(session: session)
+          TerminalTabPane(session: session).id(tab.id)
         }
       case .web:
         if let session = tab.webSession {
-          WebTabPane(session: session)
+          WebTabPane(session: session).id(tab.id)
         }
       }
     } else {

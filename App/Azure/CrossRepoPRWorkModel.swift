@@ -59,11 +59,47 @@ final class CrossRepoPRWorkModel {
   private(set) var repoErrors: [RepoRef: String] = [:]
   private(set) var lastRefreshed: Date?
 
+  /// PRWork.id -> the reason signature it had when marked done. Keyed by
+  /// signature (not just id) so a dismissed PR reappears automatically if
+  /// something new happens on it (e.g. a fresh reply after you dismissed it
+  /// for being approved) rather than staying hidden forever.
+  private(set) var dismissed: [String: String] = [:]
+  private static let dismissedKey = "prWork.dismissed"
+
+  /// What the window actually lists — `items` with dismissed-and-unchanged
+  /// PRs filtered out.
+  var visibleItems: [PRWork] { items.filter { dismissed[$0.id] != Self.signature(for: $0) } }
   /// Distinct PRs needing attention — what the toolbar badge shows.
-  var badgeCount: Int { Set(items.map(\.id)).count }
+  var badgeCount: Int { Set(visibleItems.map(\.id)).count }
 
   private let service = AzureService()
   @ObservationIgnored private var refreshTask: Task<Void, Never>?
+
+  init() {
+    if let data = UserDefaults.standard.data(forKey: Self.dismissedKey),
+       let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+      dismissed = decoded
+    }
+  }
+
+  func markDone(_ item: PRWork) {
+    dismissed[item.id] = Self.signature(for: item)
+    saveDismissed()
+  }
+
+  func unmarkDone(_ id: String) {
+    dismissed[id] = nil
+    saveDismissed()
+  }
+
+  private func saveDismissed() {
+    guard let data = try? JSONEncoder().encode(dismissed) else { return }
+    UserDefaults.standard.set(data, forKey: Self.dismissedKey)
+  }
+
+  private static func signature(for item: PRWork) -> String {
+    item.reasons.map(\.id).sorted().joined(separator: "|")
+  }
 
   func refresh(clones: [TrackedClone]) {
     refreshTask?.cancel()
@@ -122,6 +158,11 @@ final class CrossRepoPRWorkModel {
         ? $0.pr.pullRequestId < $1.pr.pullRequestId
         : $0.repo.displayName < $1.repo.displayName
     }
+    // Drop dismissals for PRs that no longer show up at all (closed, merged,
+    // no longer flagged) so this doesn't grow forever.
+    let currentIds = Set(items.map(\.id))
+    dismissed = dismissed.filter { currentIds.contains($0.key) }
+    saveDismissed()
     repoErrors = newErrors
     lastRefreshed = .now
     phase = .loaded
@@ -162,7 +203,13 @@ final class CrossRepoPRWorkModel {
       for (id, pr) in byId {
         let isCreator = creatorIds.contains(id)
         group.addTask {
-          let threads = (try? await self.service.threads(remote: remote, prId: id)) ?? []
+          let rawThreads = (try? await self.service.threads(remote: remote, prId: id)) ?? []
+          // ADO's threads endpoint can list the same thread more than once —
+          // it's associated with the PR iteration(s) it was raised against,
+          // and a thread spanning multiple iterations comes back once per
+          // iteration. Dedupe by thread id before counting/displaying.
+          var seenThreadIds = Set<Int>()
+          let threads = rawThreads.filter { seenThreadIds.insert($0.id).inserted }
           let statuses = isCreator ? await self.service.pullRequestStatuses(remote: remote, prId: id) : []
           return Self.classify(repo: repo, pr: pr, identity: identity, threads: threads,
                                statuses: statuses, isCreator: isCreator)
@@ -222,7 +269,11 @@ final class CrossRepoPRWorkModel {
       if pr.mergeStatus == "conflicts" {
         reasons.append(PRWorkReason(kind: .failingOrConflict, detail: "Merge conflicts"))
       }
-      let failing = statuses.filter { $0.state == "failed" || $0.state == "error" }
+      // codecoverage is noisy/expected-to-fail here and isn't actionable, so
+      // it's excluded rather than surfaced as something to fix.
+      let failing = statuses.filter {
+        ($0.state == "failed" || $0.state == "error") && $0.context?.name?.lowercased() != "codecoverage"
+      }
       if !failing.isEmpty {
         // ADO can report the same check name multiple times (retries/iterations).
         var seenNames = Set<String>()
@@ -233,6 +284,12 @@ final class CrossRepoPRWorkModel {
     }
 
     guard !reasons.isEmpty else { return nil }
-    return PRWork(repo: repo, pr: pr, author: pr.createdBy, reasons: reasons, relevantComments: relevantComments)
+    // A thread that's both "resolved" and "has a reply" contributes its
+    // comment via both buckets above — comment `id` is only unique within its
+    // own thread (every thread's first comment is id 1), so dedupe on
+    // (id, content) together rather than id alone.
+    var seenComments = Set<String>()
+    let dedupedComments = relevantComments.filter { seenComments.insert("\($0.id)|\($0.content ?? "")").inserted }
+    return PRWork(repo: repo, pr: pr, author: pr.createdBy, reasons: reasons, relevantComments: dedupedComments)
   }
 }

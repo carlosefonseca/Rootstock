@@ -3,10 +3,7 @@ import AppKit
 
 struct SidebarView: View {
   @Environment(WorkspaceModel.self) private var workspace
-  @Environment(CrossRepoPRWorkModel.self) private var prWorkModel
-  @Environment(\.openWindow) private var openWindow
-  @State private var showingNewWorktree = false
-  @State private var editingTerminalCommandFor: TrackedClone?
+  @Binding var editingTerminalCommandFor: TrackedClone?
 
   var body: some View {
     @Bindable var workspace = workspace
@@ -48,44 +45,6 @@ struct SidebarView: View {
         }
       }
     }
-    .toolbar {
-      ToolbarItem {
-        Menu {
-          Button("Track Existing Clone…", systemImage: "folder.badge.plus") { trackClone() }
-          Button("New Worktree from Work Item…", systemImage: "plus.rectangle.on.folder") { showingNewWorktree = true }
-        } label: {
-          Label("Add", systemImage: "plus")
-        }
-      }
-      ToolbarItem {
-        PRWorkToolbarButton(badgeCount: prWorkModel.badgeCount) { openWindow(id: "pr-work") }
-      }
-      ToolbarItem {
-        Button("Refresh", systemImage: "arrow.clockwise") {
-          Task {
-            await workspace.refreshAll()
-            prWorkModel.refresh(clones: workspace.clones)
-          }
-        }
-        .disabled(workspace.refreshing)
-      }
-    }
-    .sheet(isPresented: $showingNewWorktree) {
-      NewWorktreeView()
-    }
-    .sheet(item: $editingTerminalCommandFor) { clone in
-      TerminalCommandEditor(clone: clone) { command in
-        workspace.setTerminalInitCommand(command, for: clone)
-      }
-    }
-    // Keeps the toolbar badge populated even if the user never opens the
-    // PR-work window. One-shot rather than keyed to the clones list: that
-    // list mutates several times in quick succession while clones first load
-    // (each mutation would cancel and restart the in-flight aggregation),
-    // and the "Refresh"/Cmd+R actions already cover picking up new clones.
-    .task {
-      prWorkModel.refreshIfStale(clones: workspace.clones)
-    }
   }
 
   private func trackClone() {
@@ -108,40 +67,7 @@ struct SidebarView: View {
   }
 }
 
-/// Opens the "Pull Request Work" window. macOS toolbar buttons have no
-/// built-in `.badge()` (unlike List rows), so the count is a manual overlay.
-private struct PRWorkToolbarButton: View {
-  var badgeCount: Int
-  var action: () -> Void
-
-  var body: some View {
-    Button(action: action) {
-      // An explicit outer frame, not just the icon's own tight bounds — a
-      // toolbar item clips to its content's natural size, and a badge placed
-      // via .offset alone got its second digit clipped off ("23" rendering
-      // as "2") because it extended past the plain icon's frame.
-      ZStack(alignment: .topTrailing) {
-        Image(systemName: "arrow.triangle.pull")
-          .frame(width: 18, height: 18)
-        if badgeCount > 0 {
-          // A fixed-size circle clips a two-digit count — a capsule with a
-          // minimum width stays circular for "9" but grows for "24"/"99+".
-          Text(badgeCount > 99 ? "99+" : String(badgeCount))
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 4)
-            .frame(minWidth: 14, minHeight: 14)
-            .background(.red, in: .capsule)
-            .offset(x: 8, y: -6)
-        }
-      }
-      .frame(width: 30, height: 22)
-    }
-    .help(badgeCount > 0 ? "Pull Request Work — \(badgeCount) need your attention" : "Pull Request Work")
-  }
-}
-
-private struct TerminalCommandEditor: View {
+struct TerminalCommandEditor: View {
   @Environment(\.dismiss) private var dismiss
   var clone: TrackedClone
   var onSave: (String?) -> Void

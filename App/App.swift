@@ -8,6 +8,7 @@ struct RootstockApp: App {
   @State private var tabsStore = WorktreeTabsStore()
   @State private var linksStore = WorktreeLinksStore()
   @State private var prWorkModel = CrossRepoPRWorkModel()
+  @Environment(\.openWindow) private var openWindow
   private let updaterController = SPUStandardUpdaterController(
     startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
@@ -33,6 +34,8 @@ struct RootstockApp: App {
           }
         }
         .keyboardShortcut("r", modifiers: .command)
+        Button("Pull Request Work") { openWindow(id: "pr-work") }
+          .keyboardShortcut("p", modifiers: [.command, .shift])
       }
     }
 

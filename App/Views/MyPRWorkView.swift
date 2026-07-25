@@ -25,7 +25,7 @@ struct MyPRWorkView: View {
   }
 
   @ViewBuilder private var content: some View {
-    if model.items.isEmpty {
+    if model.visibleItems.isEmpty {
       switch model.phase {
       case .idle, .loading:
         VStack(spacing: 8) {
@@ -60,7 +60,9 @@ struct MyPRWorkView: View {
         }
         ForEach(groupedByRepo, id: \.repo.id) { group in
           Section(group.repo.displayName) {
-            ForEach(group.items) { item in PRWorkRow(item: item) }
+            ForEach(group.items) { item in
+              PRWorkRow(item: item, onMarkDone: { model.markDone(item) })
+            }
           }
         }
       }
@@ -68,7 +70,7 @@ struct MyPRWorkView: View {
   }
 
   private var groupedByRepo: [(repo: RepoRef, items: [PRWork])] {
-    Dictionary(grouping: model.items, by: \.repo)
+    Dictionary(grouping: model.visibleItems, by: \.repo)
       .map { (repo: $0.key, items: $0.value.sorted { $0.pr.pullRequestId < $1.pr.pullRequestId }) }
       .sorted { $0.repo.displayName < $1.repo.displayName }
   }
@@ -76,6 +78,7 @@ struct MyPRWorkView: View {
 
 private struct PRWorkRow: View {
   var item: PRWork
+  var onMarkDone: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -85,6 +88,9 @@ private struct PRWorkRow: View {
         // space under Portuguese) — String(_:) keeps the id a plain integer.
         Text("#\(String(item.pr.pullRequestId)) — \(item.pr.title)").font(.callout).lineLimit(1)
         Spacer()
+        Button("Mark as Done", systemImage: "checkmark.circle") { onMarkDone() }
+          .controlSize(.small).labelStyle(.iconOnly).buttonStyle(.borderless)
+          .help("Mark as done — reappears if something new happens on this PR")
         Button("Open", systemImage: "arrow.up.right.square") {
           let remote = AzureRemote(org: item.repo.org, project: item.repo.project, repo: item.repo.repo)
           AppOpener.open(remote.pullRequestURL(id: item.pr.pullRequestId))
@@ -95,7 +101,11 @@ private struct PRWorkRow: View {
         if let author = item.author { Text(author.name).font(.caption).foregroundStyle(.secondary) }
         ForEach(item.reasons) { reason in StatusPill(text: reason.detail, tint: tint(reason.kind)) }
       }
-      ForEach(previewComments) { comment in
+      // Keyed by content, not the default Identifiable `id` — ADOComment.id is
+      // only unique *within* its own thread (every thread's first comment is
+      // id 1), so several genuinely different comments here can collide on
+      // id, and ForEach would render the first one's content for all of them.
+      ForEach(previewComments, id: \.content) { comment in
         if let content = comment.content, !content.isEmpty {
           Text(content).font(.caption).foregroundStyle(.secondary).lineLimit(2)
         }

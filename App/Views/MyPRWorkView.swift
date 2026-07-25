@@ -80,7 +80,10 @@ private struct PRWorkRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text("#\(item.pr.pullRequestId) — \(item.pr.title)").font(.callout).lineLimit(1)
+        // `Text("\(Int)")` runs the value through SwiftUI's LocalizedStringKey
+        // number formatting, which inserts a locale thousands separator (a
+        // space under Portuguese) — String(_:) keeps the id a plain integer.
+        Text("#\(String(item.pr.pullRequestId)) — \(item.pr.title)").font(.callout).lineLimit(1)
         Spacer()
         Button("Open", systemImage: "arrow.up.right.square") {
           let remote = AzureRemote(org: item.repo.org, project: item.repo.project, repo: item.repo.repo)

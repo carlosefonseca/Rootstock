@@ -116,17 +116,26 @@ private struct PRWorkToolbarButton: View {
 
   var body: some View {
     Button(action: action) {
-      Image(systemName: "arrow.triangle.pull")
-        .overlay(alignment: .topTrailing) {
-          if badgeCount > 0 {
-            Text("\(min(badgeCount, 99))")
-              .font(.system(size: 9, weight: .bold))
-              .foregroundStyle(.white)
-              .padding(3)
-              .background(.red, in: .circle)
-              .offset(x: 8, y: -8)
-          }
+      // An explicit outer frame, not just the icon's own tight bounds — a
+      // toolbar item clips to its content's natural size, and a badge placed
+      // via .offset alone got its second digit clipped off ("23" rendering
+      // as "2") because it extended past the plain icon's frame.
+      ZStack(alignment: .topTrailing) {
+        Image(systemName: "arrow.triangle.pull")
+          .frame(width: 18, height: 18)
+        if badgeCount > 0 {
+          // A fixed-size circle clips a two-digit count — a capsule with a
+          // minimum width stays circular for "9" but grows for "24"/"99+".
+          Text(badgeCount > 99 ? "99+" : String(badgeCount))
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 14, minHeight: 14)
+            .background(.red, in: .capsule)
+            .offset(x: 8, y: -6)
         }
+      }
+      .frame(width: 30, height: 22)
     }
     .help(badgeCount > 0 ? "Pull Request Work — \(badgeCount) need your attention" : "Pull Request Work")
   }

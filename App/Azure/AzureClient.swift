@@ -59,18 +59,26 @@ struct AzureClient {
     }
   }
 
+  /// The signed-in identity for `org`, from the org's `connectionData`. The `id`
+  /// on the result is the same GUID ADO uses in `ADOReviewer.id` and
+  /// `ADOComment.author.id`, so it's what callers compare against to answer
+  /// "is this PR/comment/vote mine?".
+  func currentIdentity(org: String) async throws -> ADOIdentity {
+    struct ConnectionData: Decodable { var authenticatedUser: ADOIdentity? }
+    // connectionData is a preview-only resource, so it needs an explicit preview version.
+    let data = try await get(ConnectionData.self, org: org, path: "_apis/connectionData",
+                             apiVersion: "7.0-preview.1")
+    guard let identity = data.authenticatedUser else {
+      throw AzureError.decoding("connectionData had no authenticatedUser")
+    }
+    return identity
+  }
+
   /// `connectionData` is the lightweight endpoint used to confirm auth works.
   func testConnection(org: String) async -> Result<String, AzureError> {
-    struct ConnectionData: Decodable {
-      var authenticatedUser: User?
-      struct User: Decodable { var providerDisplayName: String? }
-    }
     do {
-      // connectionData is a preview-only resource, so it needs an explicit preview version.
-      let data = try await get(ConnectionData.self, org: org, path: "_apis/connectionData",
-                               apiVersion: "7.0-preview.1")
-      let name = data.authenticatedUser?.providerDisplayName ?? "connected"
-      return .success(name)
+      let identity = try await currentIdentity(org: org)
+      return .success(identity.providerDisplayName ?? "connected")
     } catch let error as AzureError {
       return .failure(error)
     } catch {

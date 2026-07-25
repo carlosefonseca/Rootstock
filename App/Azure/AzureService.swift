@@ -25,11 +25,37 @@ struct AzureService {
     return list.value.first
   }
 
+  /// Active pull requests where `identity` is a reviewer and/or the creator.
+  /// Per-repo search — not the org-wide `_apis/git/pullrequests` endpoint —
+  /// since this app deliberately scopes everything to tracked repos.
+  func pullRequests(remote: AzureRemote, reviewerId: String? = nil, creatorId: String? = nil,
+                     status: String = "active") async throws -> [ADOPullRequest] {
+    var query: [String: String] = ["searchCriteria.status": status, "$top": "200"]
+    if let reviewerId { query["searchCriteria.reviewerId"] = reviewerId }
+    if let creatorId { query["searchCriteria.creatorId"] = creatorId }
+    let list = try await client.get(ADOList<ADOPullRequest>.self, org: remote.org,
+      path: "\(repoPath(remote))/pullrequests", query: query)
+    return list.value
+  }
+
+  /// Full thread + comment detail for a PR.
+  func threads(remote: AzureRemote, prId: Int) async throws -> [ADOThread] {
+    let list = try await client.get(ADOList<ADOThread>.self, org: remote.org,
+      path: "\(repoPath(remote))/pullRequests/\(prId)/threads")
+    return list.value
+  }
+
+  /// Build/test/policy status checks attached to the PR itself (not the branch).
+  func pullRequestStatuses(remote: AzureRemote, prId: Int) async -> [ADOStatus] {
+    let list = try? await client.get(ADOList<ADOStatus>.self, org: remote.org,
+      path: "\(repoPath(remote))/pullRequests/\(prId)/statuses")
+    return list?.value ?? []
+  }
+
   /// Count of active/pending comment threads on a PR.
   func unresolvedCommentCount(remote: AzureRemote, prId: Int) async -> Int {
-    let list = try? await client.get(ADOList<ADOThread>.self, org: remote.org,
-      path: "\(repoPath(remote))/pullRequests/\(prId)/threads")
-    return list?.value.filter { $0.isUnresolved && ($0.comments?.contains { $0.commentType != "system" } ?? false) }.count ?? 0
+    let list = try? await threads(remote: remote, prId: prId)
+    return list?.filter { $0.isUnresolved && ($0.comments?.contains { $0.commentType != "system" } ?? false) }.count ?? 0
   }
 
   /// Latest build for a branch under the code org/project.

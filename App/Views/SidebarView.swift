@@ -3,6 +3,8 @@ import AppKit
 
 struct SidebarView: View {
   @Environment(WorkspaceModel.self) private var workspace
+  @Environment(CrossRepoPRWorkModel.self) private var prWorkModel
+  @Environment(\.openWindow) private var openWindow
   @State private var showingNewWorktree = false
   @State private var editingTerminalCommandFor: TrackedClone?
 
@@ -56,8 +58,14 @@ struct SidebarView: View {
         }
       }
       ToolbarItem {
+        PRWorkToolbarButton(badgeCount: prWorkModel.badgeCount) { openWindow(id: "pr-work") }
+      }
+      ToolbarItem {
         Button("Refresh", systemImage: "arrow.clockwise") {
-          Task { await workspace.refreshAll() }
+          Task {
+            await workspace.refreshAll()
+            prWorkModel.refresh(clones: workspace.clones)
+          }
         }
         .disabled(workspace.refreshing)
       }
@@ -69,6 +77,14 @@ struct SidebarView: View {
       TerminalCommandEditor(clone: clone) { command in
         workspace.setTerminalInitCommand(command, for: clone)
       }
+    }
+    // Keeps the toolbar badge populated even if the user never opens the
+    // PR-work window. One-shot rather than keyed to the clones list: that
+    // list mutates several times in quick succession while clones first load
+    // (each mutation would cancel and restart the in-flight aggregation),
+    // and the "Refresh"/Cmd+R actions already cover picking up new clones.
+    .task {
+      prWorkModel.refreshIfStale(clones: workspace.clones)
     }
   }
 
@@ -89,6 +105,30 @@ struct SidebarView: View {
         alert.runModal()
       }
     }
+  }
+}
+
+/// Opens the "Pull Request Work" window. macOS toolbar buttons have no
+/// built-in `.badge()` (unlike List rows), so the count is a manual overlay.
+private struct PRWorkToolbarButton: View {
+  var badgeCount: Int
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: "arrow.triangle.pull")
+        .overlay(alignment: .topTrailing) {
+          if badgeCount > 0 {
+            Text("\(min(badgeCount, 99))")
+              .font(.system(size: 9, weight: .bold))
+              .foregroundStyle(.white)
+              .padding(3)
+              .background(.red, in: .circle)
+              .offset(x: 8, y: -8)
+          }
+        }
+    }
+    .help(badgeCount > 0 ? "Pull Request Work — \(badgeCount) need your attention" : "Pull Request Work")
   }
 }
 

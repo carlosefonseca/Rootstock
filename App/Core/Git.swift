@@ -52,6 +52,15 @@ struct WorktreeStatus: Hashable {
   }
 }
 
+/// A submodule declared in `.gitmodules`, read statically from the config file
+/// so this works even for uninitialized submodules — only their declared
+/// identity (path/remote) is needed, not their checked-out content.
+struct GitSubmodule: Identifiable, Hashable {
+  var path: String
+  var remoteURL: String?
+  var id: String { path }
+}
+
 /// Thin async wrapper over the system `git`.
 enum Git {
   /// Validates that `directory` is inside a git working tree.
@@ -171,6 +180,29 @@ enum Git {
         .filter { !$0.isEmpty && !$0.hasSuffix("/HEAD") }
     }
     return (parse(await localResult), parse(await remoteResult))
+  }
+
+  /// One level of direct submodules declared in `directory`'s `.gitmodules`.
+  /// Fails cleanly to `[]` when there's no `.gitmodules` (non-zero exit).
+  static func submodules(in directory: URL) async -> [GitSubmodule] {
+    let result = await ShellRunner.run(
+      "git config --file .gitmodules --get-regexp '\\.(path|url)$'", in: directory)
+    guard result.succeeded else { return [] }
+
+    var paths: [String: String] = [:]   // submodule name -> path
+    var urls: [String: String] = [:]    // submodule name -> url
+
+    for rawLine in result.stdout.split(separator: "\n") {
+      let parts = rawLine.split(separator: " ", maxSplits: 1)
+      guard parts.count == 2 else { continue }
+      let key = String(parts[0])
+      let value = String(parts[1])
+      guard key.hasPrefix("submodule."), let lastDot = key.lastIndex(of: ".") else { continue }
+      let name = String(key[key.index(key.startIndex, offsetBy: "submodule.".count)..<lastDot])
+      if key.hasSuffix(".path") { paths[name] = value }
+      else if key.hasSuffix(".url") { urls[name] = value }
+    }
+    return paths.map { GitSubmodule(path: $0.value, remoteURL: urls[$0.key]) }
   }
 
   static func lastFetch(in directory: URL) async -> Date? {

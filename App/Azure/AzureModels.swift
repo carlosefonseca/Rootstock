@@ -5,6 +5,19 @@ struct ADOList<T: Decodable>: Decodable {
   var value: [T]
 }
 
+/// A person, as ADO represents them across different endpoints: the `IdentityRef`
+/// shape (reviewers, comment authors) sets `displayName`; the `connectionData`
+/// authenticated-user shape sets `providerDisplayName` instead. `id` is the
+/// stable GUID comparable across both shapes within the same org.
+struct ADOIdentity: Decodable, Hashable {
+  var id: String
+  var displayName: String?
+  var uniqueName: String?
+  var providerDisplayName: String?
+
+  var name: String { displayName ?? providerDisplayName ?? uniqueName ?? id }
+}
+
 // MARK: Pull requests
 
 struct ADOPullRequest: Decodable, Identifiable {
@@ -17,6 +30,7 @@ struct ADOPullRequest: Decodable, Identifiable {
   var sourceRefName: String?
   var targetRefName: String?
   var reviewers: [ADOReviewer]?
+  var createdBy: ADOIdentity?
 
   var id: Int { pullRequestId }
   var targetBranch: String? { targetRefName?.replacingOccurrences(of: "refs/heads/", with: "") }
@@ -44,6 +58,7 @@ struct ADOReviewer: Decodable, Identifiable {
 }
 
 struct ADOThread: Decodable {
+  var id: Int = -1              // default keeps decoding additive if a payload ever omits it
   var status: String?           // active / fixed / closed / wontFix / pending / byDesign
   var isDeleted: Bool?
   var comments: [ADOComment]?
@@ -55,7 +70,11 @@ struct ADOThread: Decodable {
   }
 }
 
-struct ADOComment: Decodable {
+struct ADOComment: Decodable, Identifiable {
+  var id: Int
+  var parentCommentId: Int?
+  var author: ADOIdentity?
+  var content: String?
   var commentType: String?      // text / system
 }
 
@@ -73,6 +92,21 @@ struct ADOBuild: Decodable, Identifiable {
     struct Href: Decodable { var href: String? }
   }
   var webURL: String? { _links?.web?.href }
+}
+
+/// A build/policy check attached to a specific pull request (distinct from
+/// `ADOBuild`, which is a branch-scoped build lookup).
+struct ADOStatus: Decodable {
+  var id: Int?
+  var state: String?            // notApplicable / error / failed / notSet / pending / succeeded
+  var description: String?
+  var targetUrl: String?
+  var context: Context?
+
+  struct Context: Decodable {
+    var name: String?
+    var genre: String?
+  }
 }
 
 // MARK: Work items

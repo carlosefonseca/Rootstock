@@ -7,6 +7,7 @@ struct RootstockApp: App {
   @State private var workspace = WorkspaceModel()
   @State private var tabsStore = WorktreeTabsStore()
   @State private var linksStore = WorktreeLinksStore()
+  @State private var prWorkModel = CrossRepoPRWorkModel()
   private let updaterController = SPUStandardUpdaterController(
     startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
@@ -16,6 +17,7 @@ struct RootstockApp: App {
         .environment(workspace)
         .environment(tabsStore)
         .environment(linksStore)
+        .environment(prWorkModel)
         .frame(minWidth: 820, minHeight: 520)
     }
     .modelContainer(Self.sharedModelContainer)
@@ -24,8 +26,13 @@ struct RootstockApp: App {
         CheckForUpdatesView(updater: updaterController.updater)
       }
       CommandGroup(after: .sidebar) {
-        Button("Refresh All") { Task { await workspace.refreshAll() } }
-          .keyboardShortcut("r", modifiers: .command)
+        Button("Refresh All") {
+          Task {
+            await workspace.refreshAll()
+            prWorkModel.refresh(clones: workspace.clones)
+          }
+        }
+        .keyboardShortcut("r", modifiers: .command)
       }
     }
 
@@ -33,6 +40,14 @@ struct RootstockApp: App {
       SettingsView()
         .environment(workspace)
     }
+
+    Window("Pull Request Work", id: "pr-work") {
+      MyPRWorkView()
+        .environment(workspace)
+        .environment(tabsStore)
+        .environment(prWorkModel)
+    }
+    .defaultSize(width: 640, height: 440)
   }
 
   /// Pinned to an explicit, namespaced path. SwiftData's unqualified default

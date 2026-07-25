@@ -8,8 +8,69 @@ struct SettingsView: View {
         .tabItem { Label("General", systemImage: "gearshape") }
       AzureSettingsView()
         .tabItem { Label("Azure DevOps", systemImage: "cloud") }
+      ShortcutsSettingsView()
+        .tabItem { Label("Shortcuts", systemImage: "keyboard") }
     }
     .frame(width: 540, height: 460)
+  }
+}
+
+/// A reference list of the app's keyboard shortcuts. Not user-customizable —
+/// SwiftUI's `.keyboardShortcut` bindings aren't introspectable at runtime, so
+/// this is a hand-maintained mirror of what's wired up in `App.swift`,
+/// `MainTabBarView`, and `WorktreeDetailView`; keep it in sync when adding or
+/// changing a shortcut there.
+private struct ShortcutsSettingsView: View {
+  private struct Shortcut: Identifiable {
+    var action: String
+    var keys: String
+    var id: String { action }
+  }
+  private struct Group: Identifiable {
+    var title: String
+    var items: [Shortcut]
+    var id: String { title }
+  }
+
+  private let groups: [Group] = [
+    Group(title: "Window", items: [
+      Shortcut(action: "Refresh All", keys: "⌘R"),
+      Shortcut(action: "Pull Request Work", keys: "⌘⇧P"),
+    ]),
+    Group(title: "Worktrees", items: [
+      Shortcut(action: "Next Worktree", keys: "⌘⌥→"),
+      Shortcut(action: "Previous Worktree", keys: "⌘⌥←"),
+      Shortcut(action: "Reveal in Finder", keys: "⌘⇧R"),
+      Shortcut(action: "Open in VS Code", keys: "⌘⇧C"),
+      Shortcut(action: "Open in Fork", keys: "⌘⇧K"),
+      Shortcut(action: "Toggle Inspector", keys: "⌘I"),
+    ]),
+    Group(title: "Tabs", items: [
+      Shortcut(action: "Switch to Tab 1–9", keys: "⌘1 … ⌘9"),
+      Shortcut(action: "Next Tab", keys: "⌃⇥"),
+      Shortcut(action: "Previous Tab", keys: "⌃⇧⇥"),
+      Shortcut(action: "New Terminal Tab", keys: "⌘T"),
+      Shortcut(action: "New Web Tab", keys: "⌘⇧T"),
+    ]),
+  ]
+
+  var body: some View {
+    Form {
+      ForEach(groups) { group in
+        Section(group.title) {
+          ForEach(group.items) { item in
+            LabeledContent(item.action) {
+              Text(item.keys).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary)
+            }
+          }
+        }
+      }
+      Section {
+        Text("Worktree and tab shortcuts apply to whichever worktree window is in front.")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+    }
+    .formStyle(.grouped)
   }
 }
 

@@ -44,6 +44,24 @@ final class WorkspaceModel {
     return nil
   }
 
+  /// Every worktree across every clone, in the same order the sidebar lists
+  /// them (clones sorted by display name, worktrees within a clone in
+  /// discovery order) — what worktree-switching shortcuts cycle through.
+  var orderedWorktrees: [WorktreeInfo] {
+    clones.flatMap { worktrees[$0.commonDir] ?? [] }
+  }
+
+  /// Selects the next/previous worktree in `orderedWorktrees`, wrapping
+  /// around. Drives the Cmd+Option+Right/Left "switch worktree" shortcuts.
+  func selectAdjacentWorktree(offset: Int) {
+    let list = orderedWorktrees
+    guard !list.isEmpty else { return }
+    let currentIndex = selectedPath.flatMap { path in list.firstIndex { $0.path == path } } ?? -1
+    let count = list.count
+    let newIndex = ((currentIndex + offset) % count + count) % count
+    selectedPath = list[newIndex].path
+  }
+
   func clone(forWorktree worktree: WorktreeInfo) -> TrackedClone? {
     clones.first { commonDir in
       worktrees[commonDir.commonDir]?.contains(where: { $0.path == worktree.path }) ?? false

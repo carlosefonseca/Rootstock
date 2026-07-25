@@ -36,6 +36,11 @@ struct RootstockApp: App {
         .keyboardShortcut("r", modifiers: .command)
         Button("Pull Request Work") { openWindow(id: "pr-work") }
           .keyboardShortcut("p", modifiers: [.command, .shift])
+        Divider()
+        Button("Next Worktree") { workspace.selectAdjacentWorktree(offset: 1) }
+          .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+        Button("Previous Worktree") { workspace.selectAdjacentWorktree(offset: -1) }
+          .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
       }
     }
 

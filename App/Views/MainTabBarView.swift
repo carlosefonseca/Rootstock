@@ -56,9 +56,34 @@ struct MainTabBarView: View {
           .keyboardShortcut(.tab, modifiers: .control)
         Button("", action: { tabsStore.selectAdjacent(offset: -1, for: worktree) })
           .keyboardShortcut(.tab, modifiers: [.control, .shift])
+        Button("", action: {
+          let tab = tabsStore.addTerminalTab(for: worktree, initialCommand: terminalInitCommand)
+          tabsStore.select(tab.id, for: worktree)
+        })
+        .keyboardShortcut("t", modifiers: .command)
+        Button("", action: {
+          let tab = tabsStore.addWebTab(for: worktree)
+          tabsStore.select(tab.id, for: worktree)
+        })
+        .keyboardShortcut("t", modifiers: [.command, .shift])
+      }
+      .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
+      // Cmd+1...Cmd+9 jump straight to a tab by position — e.g. the work item
+      // or Figma tab, wherever it landed in this worktree's tab order — rather
+      // than only being able to cycle one at a time with Ctrl+Tab.
+      Group {
+        ForEach(1...9, id: \.self) { number in
+          Button("", action: { selectTab(at: number - 1) })
+            .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
+        }
       }
       .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
     }
+  }
+
+  private func selectTab(at index: Int) {
+    guard tabs.indices.contains(index) else { return }
+    tabsStore.select(tabs[index].id, for: worktree)
   }
 
   private var tabBar: some View {

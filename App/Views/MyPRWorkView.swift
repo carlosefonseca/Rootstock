@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Cross-repo pull-request work: PRs to review, PRs waiting on the author that
@@ -98,7 +99,10 @@ private struct PRWorkRow: View {
         .controlSize(.small).labelStyle(.iconOnly).buttonStyle(.borderless)
       }
       HStack(spacing: 6) {
-        if let author = item.author { Text(author.name).font(.caption).foregroundStyle(.secondary) }
+        if let author = item.author {
+          AuthorAvatar(org: item.repo.org, identity: author)
+          Text(author.name).font(.caption).foregroundStyle(.secondary)
+        }
         ForEach(item.reasons) { reason in StatusPill(text: reason.detail, tint: tint(reason.kind)) }
       }
       // Keyed by content, not the default Identifiable `id` — ADOComment.id is
@@ -135,6 +139,35 @@ private struct PRWorkRow: View {
     case .waitingResolved: return .green
     case .hasReplies: return .purple
     case .failingOrConflict: return .red
+    }
+  }
+}
+
+/// A PR author's ADO avatar. `imageUrl` isn't a public image — it needs the
+/// same org auth as any other API call — so this goes through `AvatarCache`
+/// rather than a plain `AsyncImage(url:)`.
+private struct AuthorAvatar: View {
+  var org: String
+  var identity: ADOIdentity
+
+  @State private var image: NSImage?
+
+  var body: some View {
+    Group {
+      if let image {
+        Image(nsImage: image).resizable()
+      } else {
+        Image(systemName: "person.crop.circle.fill").resizable().foregroundStyle(.tertiary)
+      }
+    }
+    .frame(width: 16, height: 16)
+    .clipShape(.circle)
+    .task(id: identity.imageUrl) {
+      guard let urlString = identity.imageUrl,
+            let data = await AvatarCache.shared.data(org: org, urlString: urlString),
+            let loaded = NSImage(data: data)
+      else { return }
+      image = loaded
     }
   }
 }

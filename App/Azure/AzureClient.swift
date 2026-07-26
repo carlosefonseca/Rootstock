@@ -74,6 +74,21 @@ struct AzureClient {
     return identity
   }
 
+  /// Fetches raw bytes from an already-authenticated ADO URL, e.g. an
+  /// `ADOIdentity.imageUrl` avatar — those aren't public images and need the
+  /// same bearer/PAT auth as any other ADO API call.
+  func imageData(org: String, urlString: String) async -> Data? {
+    guard let token = await AzureAuth.shared.token(forOrg: org), let url = URL(string: urlString) else {
+      return nil
+    }
+    var request = URLRequest(url: url)
+    request.setValue(token.authorizationHeader, forHTTPHeaderField: "Authorization")
+    guard let (data, response) = try? await session.data(for: request),
+          let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+    else { return nil }
+    return data
+  }
+
   /// `connectionData` is the lightweight endpoint used to confirm auth works.
   func testConnection(org: String) async -> Result<String, AzureError> {
     do {

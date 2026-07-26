@@ -14,6 +14,10 @@ struct ADOIdentity: Decodable, Hashable {
   var displayName: String?
   var uniqueName: String?
   var providerDisplayName: String?
+  /// Present on the `IdentityRef` shape; requires the same auth as any other
+  /// ADO call to fetch (it's not a public image), so it's loaded through
+  /// `AzureClient.imageData` rather than a plain `AsyncImage`.
+  var imageUrl: String?
 
   var name: String { displayName ?? providerDisplayName ?? uniqueName ?? id }
 }

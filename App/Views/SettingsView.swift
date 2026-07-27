@@ -78,16 +78,27 @@ private struct ShortcutsSettingsView: View {
 }
 
 private struct GeneralSettingsView: View {
-  @AppStorage(AppSettings.terminalFontNameKey) private var fontName = "Menlo"
+  @AppStorage(AppSettings.terminalFontNameKey) private var fontName = "Monaco"
   @AppStorage(AppSettings.terminalFontSizeKey) private var fontSize = 12.0
 
   @State private var monospacedFonts: [String] = []
 
   /// Every fixed-pitch font actually installed — including any Nerd Fonts — not a
   /// curated shortlist. Filtered to monospaced since a terminal needs a fixed grid.
+  ///
+  /// `NSFont.isFixedPitch` is unreliable for this: fonts with ligature/contextual
+  /// substitution tables (SF Mono Ligaturized, Nerd Font ligaturized variants) report
+  /// `false` even when every base glyph advances identically, because the flag reflects
+  /// "could a substitution produce a variable-width run" rather than grid uniformity.
+  /// Measuring "i" vs "W" advancement catches those fonts too.
   private static func loadMonospacedFonts() -> [String] {
     NSFontManager.shared.availableFonts
-      .filter { NSFont(name: $0, size: 12)?.isFixedPitch == true }
+      .filter { name in
+        guard let f = NSFont(name: name, size: 12) else { return false }
+        let narrow = f.advancement(forCGGlyph: CGGlyph(f.glyph(withName: "i"))).width
+        let wide = f.advancement(forCGGlyph: CGGlyph(f.glyph(withName: "W"))).width
+        return narrow > 0 && narrow == wide
+      }
       .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
   }
 

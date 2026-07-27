@@ -6,7 +6,7 @@ enum AppSettings {
   static let terminalFontSizeKey = "terminal.fontSize"
 
   static var terminalFontName: String {
-    UserDefaults.standard.string(forKey: terminalFontNameKey) ?? "Menlo"
+    UserDefaults.standard.string(forKey: terminalFontNameKey) ?? "Monaco"
   }
 
   static var terminalFontSize: Double {

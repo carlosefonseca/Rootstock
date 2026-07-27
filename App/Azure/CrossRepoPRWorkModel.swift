@@ -150,16 +150,29 @@ final class CrossRepoPRWorkModel {
     debugLog("discovered \(repos.count) repos: \(repos.map(\.id))")
     let orgs = Set(repos.map(\.org))
 
+    debugLog("resolving identity for orgs: \(orgs)")
     var identities: [String: Result<ADOIdentity, Error>] = [:]
     await withTaskGroup(of: (String, Result<ADOIdentity, Error>).self) { group in
       for org in orgs {
+        debugLog("spawning identity task for \(org)")
         group.addTask {
-          do { return (org, .success(try await self.service.client.currentIdentity(org: org))) }
-          catch { return (org, .failure(error)) }
+          debugLog("identity task for \(org) started")
+          do {
+            let identity = try await self.service.client.currentIdentity(org: org)
+            debugLog("identity task for \(org) succeeded: \(identity.id)")
+            return (org, .success(identity))
+          } catch {
+            debugLog("identity task for \(org) threw: \(error)")
+            return (org, .failure(error))
+          }
         }
       }
-      for await (org, result) in group { identities[org] = result }
+      for await (org, result) in group {
+        debugLog("received identity result for \(org)")
+        identities[org] = result
+      }
     }
+    debugLog("identities dict has \(identities.count) entries")
     for (org, result) in identities {
       switch result {
       case .success(let identity): debugLog("identity for \(org): \(identity.id) (\(identity.name))")

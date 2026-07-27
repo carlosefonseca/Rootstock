@@ -113,13 +113,33 @@ final class CrossRepoPRWorkModel {
     item.reasons.map(\.id).sorted().joined(separator: "|")
   }
 
+  /// Set synchronously in `refresh()`, not inside `performRefresh` — both the
+  /// main window and the PR Work window (if it auto-reopened from window
+  /// restoration) call `refreshIfStale` independently on launch, and since
+  /// neither `lastRefreshed` nor any in-flight state exists yet at that exact
+  /// moment, they'd otherwise both pass the staleness check and each call
+  /// `refresh()`, repeatedly cancelling each other (visible as a string of
+  /// "-999 cancelled" network errors) before either ever completes. Flipping
+  /// this flag before the new Task is even created — not from inside it —
+  /// closes that race: whichever call reaches here first wins, synchronously,
+  /// within the same MainActor turn.
+  private(set) var isRefreshing = false
+
   func refresh(clones: [TrackedClone]) {
     refreshTask?.cancel()
-    refreshTask = Task { await self.performRefresh(clones: clones) }
+    isRefreshing = true
+    refreshTask = Task {
+      await self.performRefresh(clones: clones)
+      self.isRefreshing = false
+    }
   }
 
-  /// Refreshes only if the last refresh is missing or older than `staleAfter`.
+  /// Refreshes only if the last refresh is missing or older than `staleAfter`
+  /// — and only if nothing is already in flight, so opportunistic callers
+  /// (a window appearing) never race each other. An explicit `refresh()` call
+  /// (the Refresh button, Cmd+R) still always cancels-and-restarts.
   func refreshIfStale(clones: [TrackedClone], staleAfter: TimeInterval = 300) {
+    guard !isRefreshing else { return }
     if let lastRefreshed, Date().timeIntervalSince(lastRefreshed) < staleAfter { return }
     refresh(clones: clones)
   }

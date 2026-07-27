@@ -1,6 +1,18 @@
 import Foundation
 import Observation
 
+/// Traces the refresh pipeline to stderr — repos discovered, identity
+/// resolved per org, raw PR counts per repo, and why each individual PR was
+/// or wasn't included. Invisible during normal GUI use; only shows up when
+/// launched from Terminal or inspected via Console. Kept permanently since
+/// this is exactly the kind of thing that's only reproducible on someone
+/// else's machine (a specific org/identity/auth combination), where the only
+/// way to diagnose a "why didn't my PR show up" report is to have them run a
+/// build with this and send back the output.
+private func debugLog(_ message: String) {
+  FileHandle.standardError.write("DEBUG PRWork: \(message)\n".data(using: .utf8)!)
+}
+
 /// One Azure DevOps repo the app knows about — either a tracked clone's own
 /// remote, or one of its submodules'.
 struct RepoRef: Identifiable, Hashable {
@@ -115,6 +127,7 @@ final class CrossRepoPRWorkModel {
   private func performRefresh(clones: [TrackedClone]) async {
     phase = .loading
     let repos = await Self.discoverRepos(clones: clones)
+    debugLog("discovered \(repos.count) repos: \(repos.map(\.id))")
     let orgs = Set(repos.map(\.org))
 
     var identities: [String: Result<ADOIdentity, Error>] = [:]
@@ -127,8 +140,14 @@ final class CrossRepoPRWorkModel {
       }
       for await (org, result) in group { identities[org] = result }
     }
+    for (org, result) in identities {
+      switch result {
+      case .success(let identity): debugLog("identity for \(org): \(identity.id) (\(identity.name))")
+      case .failure(let error): debugLog("identity FAILED for \(org): \(error)")
+      }
+    }
 
-    guard !Task.isCancelled else { return }
+    guard !Task.isCancelled else { debugLog("cancelled after identity resolution"); return }
 
     var newItems: [PRWork] = []
     var newErrors: [RepoRef: String] = [:]
@@ -147,12 +166,14 @@ final class CrossRepoPRWorkModel {
         }
       }
       for await (repo, items, errorMessage) in group {
+        debugLog("repo \(repo.id): \(items?.count ?? 0) items\(errorMessage.map { " ERROR: \($0)" } ?? "")")
         if let items { newItems.append(contentsOf: items) }
         if let errorMessage { newErrors[repo] = errorMessage }
       }
     }
 
-    guard !Task.isCancelled else { return }
+    guard !Task.isCancelled else { debugLog("cancelled after repo processing"); return }
+    debugLog("total newItems=\(newItems.count)")
     items = newItems.sorted {
       $0.repo.displayName == $1.repo.displayName
         ? $0.pr.pullRequestId < $1.pr.pullRequestId
@@ -194,12 +215,13 @@ final class CrossRepoPRWorkModel {
     async let creatorPRsTask = service.pullRequests(remote: remote, creatorId: identity.id)
     let reviewerPRs = try await reviewerPRsTask
     let creatorPRs = try await creatorPRsTask
+    debugLog("\(repo.id): reviewerPRs=\(reviewerPRs.count) creatorPRs=\(creatorPRs.count)")
 
     var byId: [Int: ADOPullRequest] = [:]
     for pr in reviewerPRs + creatorPRs { byId[pr.pullRequestId] = pr }
     let creatorIds = Set(creatorPRs.map(\.pullRequestId))
 
-    return await withTaskGroup(of: PRWork?.self) { group in
+    return await withTaskGroup(of: (Int, PRWork?).self) { group in
       for (id, pr) in byId {
         let isCreator = creatorIds.contains(id)
         group.addTask {
@@ -211,12 +233,15 @@ final class CrossRepoPRWorkModel {
           var seenThreadIds = Set<Int>()
           let threads = rawThreads.filter { seenThreadIds.insert($0.id).inserted }
           let statuses = isCreator ? await self.service.pullRequestStatuses(remote: remote, prId: id) : []
-          return Self.classify(repo: repo, pr: pr, identity: identity, threads: threads,
-                               statuses: statuses, isCreator: isCreator)
+          return (id, Self.classify(repo: repo, pr: pr, identity: identity, threads: threads,
+                                    statuses: statuses, isCreator: isCreator))
         }
       }
       var results: [PRWork] = []
-      for await item in group { if let item { results.append(item) } }
+      for await (id, item) in group {
+        debugLog("\(repo.id) #\(id): \(item == nil ? "no reason (not included)" : "INCLUDED")")
+        if let item { results.append(item) }
+      }
       return results
     }
   }
@@ -283,7 +308,14 @@ final class CrossRepoPRWorkModel {
       }
     }
 
-    guard !reasons.isEmpty else { return nil }
+    if reasons.isEmpty {
+      let reviewerEntry = pr.reviewers?.first { $0.id == identity.id }
+      debugLog("classify \(repo.id) #\(pr.pullRequestId): no reasons — " +
+        "reviewerEntry=\(reviewerEntry.map { "\($0.displayName) vote=\($0.vote) voteKind=\($0.voteKind)" } ?? "nil") " +
+        "isDraft=\(String(describing: pr.isDraft)) status=\(pr.status) isCreator=\(isCreator) " +
+        "mergeStatus=\(String(describing: pr.mergeStatus)) statuses.count=\(statuses.count)")
+      return nil
+    }
     // A thread that's both "resolved" and "has a reply" contributes its
     // comment via both buckets above — comment `id` is only unique within its
     // own thread (every thread's first comment is id 1), so dedupe on

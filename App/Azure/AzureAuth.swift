@@ -39,6 +39,13 @@ actor AzureAuth {
   }
   private var azCache: CachedToken?
 
+  /// Why the last `azToken()` call returned nil — surfaced in
+  /// `AzureError.noCredential` so a failure past `az account show` (wrong
+  /// tenant, `az` not resolvable from the app's login shell, unexpected CLI
+  /// output) is diagnosable from the error message alone instead of needing
+  /// someone to reproduce it with terminal access to the affected machine.
+  private(set) var lastAzFailure: String?
+
   /// The credential to use for `org`, honouring the per-org auth mode. In `.az`
   /// mode the keychain is never read, so no keychain prompt appears.
   func token(forOrg org: String) async -> AzureToken? {
@@ -66,10 +73,18 @@ actor AzureAuth {
     }
     let result = await ShellRunner.run(
       "az account get-access-token --resource \(resource) -o json")
-    guard result.succeeded,
-          let data = result.stdout.data(using: .utf8),
+    guard result.succeeded else {
+      let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+      lastAzFailure = stderr.isEmpty ? "`az account get-access-token` exited \(result.exitCode)" : stderr
+      return nil
+    }
+    guard let data = result.stdout.data(using: .utf8),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let token = json["accessToken"] as? String else { return nil }
+          let token = json["accessToken"] as? String else {
+      let preview = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)
+      lastAzFailure = "`az account get-access-token` returned unexpected output: \(preview)"
+      return nil
+    }
 
     var expires = Date().addingTimeInterval(3000)
     if let expiresOn = json["expires_on"] as? Double {
@@ -78,6 +93,7 @@ actor AzureAuth {
       expires = Date(timeIntervalSince1970: secs)
     }
     azCache = CachedToken(token: token, expiresAt: expires)
+    lastAzFailure = nil
     return token
   }
 }

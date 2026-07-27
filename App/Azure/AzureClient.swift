@@ -1,15 +1,16 @@
 import Foundation
 
 enum AzureError: LocalizedError {
-  case noCredential(org: String)
+  case noCredential(org: String, detail: String? = nil)
   case http(status: Int, message: String)
   case decoding(String)
   case expiredSession(org: String)
 
   var errorDescription: String? {
     switch self {
-    case .noCredential(let org):
-      return "No credential for \(org). Add a PAT in Settings, or sign in with `az login`."
+    case .noCredential(let org, let detail):
+      let base = "No credential for \(org). Add a PAT in Settings, or sign in with `az login`."
+      return detail.map { "\(base) (\($0))" } ?? base
     case .http(let status, let message):
       return "Azure DevOps returned \(status)\(message.isEmpty ? "" : ": \(message)")"
     case .decoding(let detail):
@@ -39,7 +40,7 @@ struct AzureClient {
   func get<T: Decodable>(_ type: T.Type, org: String, path: String,
                          query: [String: String] = [:], apiVersion: String? = nil) async throws -> T {
     guard let token = await AzureAuth.shared.token(forOrg: org) else {
-      throw AzureError.noCredential(org: org)
+      throw AzureError.noCredential(org: org, detail: await AzureAuth.shared.lastAzFailure)
     }
     var comps = URLComponents(string: "https://dev.azure.com/\(org)/\(path)")!
     var items = query.map { URLQueryItem(name: $0.key, value: $0.value) }

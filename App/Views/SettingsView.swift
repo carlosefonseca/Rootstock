@@ -11,7 +11,7 @@ struct SettingsView: View {
       ShortcutsSettingsView()
         .tabItem { Label("Shortcuts", systemImage: "keyboard") }
     }
-    .frame(width: 540, height: 460)
+    .frame(width: 620, height: 520)
   }
 }
 
@@ -251,15 +251,21 @@ private struct OrgPATRow: View {
         Button("Test Connection") { test() }
           .disabled(testing)
         if testing { ProgressView().controlSize(.small) }
-        switch testResult {
-        case .success(let name):
-          Label(name, systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-        case .failure(let message):
-          Label(message, systemImage: "xmark.circle.fill").font(.caption).foregroundStyle(.red)
-            .lineLimit(2)
-        case nil:
-          EmptyView()
-        }
+      }
+      // Own row, not crammed into the button's HStack — a long diagnostic
+      // message (e.g. an AADSTS error code pulled out of a sign-in page) was
+      // getting clipped at 2 lines in a narrow leftover space next to the
+      // button instead of wrapping to fill the row.
+      switch testResult {
+      case .success(let name):
+        Label(name, systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+          .fixedSize(horizontal: false, vertical: true)
+      case .failure(let message):
+        Label(message, systemImage: "xmark.circle.fill").font(.caption).foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
+          .textSelection(.enabled)
+      case nil:
+        EmptyView()
       }
     }
     .padding(.vertical, 4)

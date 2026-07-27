@@ -4,7 +4,7 @@ enum AzureError: LocalizedError {
   case noCredential(org: String, detail: String? = nil)
   case http(status: Int, message: String)
   case decoding(String)
-  case expiredSession(org: String)
+  case expiredSession(org: String, detail: String? = nil)
 
   var errorDescription: String? {
     switch self {
@@ -15,10 +15,28 @@ enum AzureError: LocalizedError {
       return "Azure DevOps returned \(status)\(message.isEmpty ? "" : ": \(message)")"
     case .decoding(let detail):
       return "Couldn't read the Azure DevOps response (\(detail))."
-    case .expiredSession(let org):
-      return "Your Azure DevOps session for \(org) looks expired — sign in again with `az login`, or check the PAT in Settings."
+    case .expiredSession(let org, let detail):
+      let base = "Your Azure DevOps session for \(org) looks expired — sign in again with `az login`, or check the PAT in Settings."
+      return detail.map { "\(base) (\($0))" } ?? base
     }
   }
+}
+
+/// Pulls whatever's diagnostic out of an AAD/ADO sign-in or block page — the
+/// `AADSTS######` code when there is one (the specific, actionable reason:
+/// conditional access, consent required, wrong tenant, ...), else the page
+/// `<title>`, else nothing worth showing.
+private func diagnosticSnippet(from data: Data) -> String? {
+  guard let text = String(data: data, encoding: .utf8) else { return nil }
+  if let range = text.range(of: #"AADSTS\d+[^"'<]*"#, options: .regularExpression) {
+    return String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+  if let range = text.range(of: #"<title[^>]*>([^<]*)</title>"#, options: [.regularExpression, .caseInsensitive]),
+     let titleRange = text.range(of: #"(?<=>)[^<]*(?=</title>)"#, options: [.regularExpression, .caseInsensitive], range: range) {
+    let title = text[titleRange].trimmingCharacters(in: .whitespacesAndNewlines)
+    return title.isEmpty ? nil : title
+  }
+  return nil
 }
 
 private extension UInt8 {
@@ -65,7 +83,7 @@ struct AzureClient {
     // than a clean 401 — surface that plainly instead of a raw JSON parsing
     // error that gives no hint of what actually went wrong.
     if let firstByte = data.first(where: { !$0.isWhitespaceASCII }), firstByte == UInt8(ascii: "<") {
-      throw AzureError.expiredSession(org: org)
+      throw AzureError.expiredSession(org: org, detail: diagnosticSnippet(from: data))
     }
     do {
       return try JSONDecoder().decode(T.self, from: data)

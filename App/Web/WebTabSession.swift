@@ -41,7 +41,18 @@ final class WebTabSession: NSObject {
 
   init(urlString: String) {
     self.currentURLString = urlString
-    self.webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+    let configuration = WKWebViewConfiguration()
+    // A bare WKWebView doesn't self-identify as Safari at all — its default
+    // UA is missing "Version/X Safari/605.1.15" entirely, just the generic
+    // "AppleWebKit/605.1.15 (KHTML, like Gecko)" prefix. Sites that
+    // browser-sniff to pick their ITP-compatibility strategy (Safari
+    // specifically needs different handling than most browsers for
+    // third-party cookies) can end up choosing the wrong path for an
+    // unrecognized WebKit-based UA instead of whatever they specifically
+    // adapt for Safari. Matching Safari's own installed version exactly gets
+    // this webview treated the same way Safari itself would be.
+    configuration.applicationNameForUserAgent = Self.safariUserAgentSuffix
+    self.webView = WKWebView(frame: .zero, configuration: configuration)
     super.init()
     webView.navigationDelegate = self
     webView.uiDelegate = self
@@ -86,6 +97,14 @@ final class WebTabSession: NSObject {
     if trimmed == "about:blank" { return URL(string: trimmed) }
     if trimmed.contains("://") { return URL(string: trimmed) }
     return URL(string: "https://\(trimmed)")
+  }
+
+  /// Reads the installed Safari's actual version rather than hardcoding one,
+  /// so it doesn't silently drift stale after a Safari update.
+  private static var safariUserAgentSuffix: String {
+    let version = Bundle(path: "/Applications/Safari.app")?
+      .infoDictionary?["CFBundleShortVersionString"] as? String ?? "17.0"
+    return "Version/\(version) Safari/605.1.15"
   }
 }
 

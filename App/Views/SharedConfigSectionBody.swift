@@ -10,6 +10,7 @@ struct SharedConfigEditor: View {
 
   @State private var baseBranch = ""
   @State private var workItemURLs: [String] = []
+  @State private var additionalPRURLs: [String] = []
   @State private var figmaURL = ""
   @State private var slackURL = ""
   @State private var loaded = BranchConfig()
@@ -19,6 +20,7 @@ struct SharedConfigEditor: View {
   private var isBranchDirty: Bool {
     baseBranch != (loaded.prjDep ?? "") ||
     workItemURLs.filter({ !$0.isEmpty }) != loaded.workItemURLs ||
+    additionalPRURLs.filter({ !$0.isEmpty }) != loaded.additionalPRURLs ||
     figmaURL != (loaded.figmaURL ?? "") ||
     slackURL != (loaded.slackChannelURL ?? "")
   }
@@ -40,6 +42,14 @@ struct SharedConfigEditor: View {
           Text("Work items")
         } footer: {
           Text("Paste full Azure DevOps work item URLs — org and project come from the link itself.")
+            .font(.caption2)
+        }
+        Section {
+          PullRequestURLListEditor(urls: $additionalPRURLs)
+        } header: {
+          Text("Additional pull requests")
+        } footer: {
+          Text("For work split across several PRs — the one matching this branch's name is already shown automatically.")
             .font(.caption2)
         }
         Section("Links") {
@@ -69,7 +79,7 @@ struct SharedConfigEditor: View {
       }
       .padding(16)
     }
-    .frame(width: 460, height: 540)
+    .frame(width: 640, height: 680)
     .task { load() }
   }
 
@@ -77,6 +87,7 @@ struct SharedConfigEditor: View {
     loaded = BranchConfig.load(worktree: worktree.url, branch: branch)
     baseBranch = loaded.prjDep ?? ""
     workItemURLs = loaded.workItemURLs
+    additionalPRURLs = loaded.additionalPRURLs
     figmaURL = loaded.figmaURL ?? ""
     slackURL = loaded.slackChannelURL ?? ""
   }
@@ -86,6 +97,7 @@ struct SharedConfigEditor: View {
       var config = BranchConfig.load(worktree: worktree.url, branch: branch) // keep passthrough lines
       config.prjDep = baseBranch.isEmpty ? nil : baseBranch
       config.workItemURLs = workItemURLs.filter { !$0.isEmpty }
+      config.additionalPRURLs = additionalPRURLs.filter { !$0.isEmpty }
       config.figmaURL = figmaURL.isEmpty ? nil : figmaURL
       config.slackChannelURL = slackURL.isEmpty ? nil : slackURL
       try config.save(worktree: worktree.url, branch: branch)
@@ -113,6 +125,26 @@ private struct WorkItemURLListEditor: View {
         }
       }
       Button("Add Work Item", systemImage: "plus.circle") { urls.append("") }
+        .labelStyle(.titleAndIcon)
+    }
+  }
+}
+
+private struct PullRequestURLListEditor: View {
+  @Binding var urls: [String]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      ForEach(urls.indices, id: \.self) { index in
+        HStack {
+          TextField("Pull request URL", text: $urls[index],
+                     prompt: Text("https://dev.azure.com/org/project/_git/repo/pullrequest/12345"))
+            .labelsHidden()
+          Button("Remove", systemImage: "minus.circle") { urls.remove(at: index) }
+            .labelStyle(.iconOnly).foregroundStyle(.secondary)
+        }
+      }
+      Button("Add Pull Request", systemImage: "plus.circle") { urls.append("") }
         .labelStyle(.titleAndIcon)
     }
   }

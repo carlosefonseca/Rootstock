@@ -25,6 +25,14 @@ struct AzureService {
     return list.value.first
   }
 
+  /// A single PR by id, regardless of its source branch or status — how
+  /// manually-attached "additional" PRs (e.g. the work was split across
+  /// several PRs) are fetched, as opposed to `pullRequest(remote:branch:)`
+  /// which only finds the one active PR for the checked-out branch.
+  func pullRequest(remote: AzureRemote, id: Int) async throws -> ADOPullRequest {
+    try await client.get(ADOPullRequest.self, org: remote.org, path: "\(repoPath(remote))/pullRequests/\(id)")
+  }
+
   /// Active pull requests where `identity` is a reviewer and/or the creator.
   /// Per-repo search — not the org-wide `_apis/git/pullrequests` endpoint —
   /// since this app deliberately scopes everything to tracked repos.

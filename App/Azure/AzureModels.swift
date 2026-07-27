@@ -45,6 +45,7 @@ struct ADOReviewer: Decodable, Identifiable {
   var displayName: String
   var vote: Int                 // 10 approved, 5 approved w/ suggestions, 0 none, -5 waiting, -10 rejected
   var isRequired: Bool?
+  var imageUrl: String?
 
   enum Vote: String {
     case approved, approvedWithSuggestions, noVote, waiting, rejected

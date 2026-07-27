@@ -30,11 +30,22 @@ final class WorktreeAzureModel {
     var id: String { url.canonical }
   }
 
+  /// One manually-attached PR beyond the branch's auto-detected one — e.g. the
+  /// work was split across several PRs. `pr` stays nil (not an error state)
+  /// while the fetch is in flight or if it fails — the id/org/project/repo
+  /// from the URL are enough to show something useful.
+  struct AdditionalPREntry: Identifiable {
+    var url: PullRequestURL
+    var pr: ADOPullRequest?
+    var id: String { url.canonical }
+  }
+
   private(set) var phase: Phase = .idle
   private(set) var pr: ADOPullRequest?
   private(set) var unresolved = 0
   private(set) var pipeline = Pipeline(state: .none, url: nil)
   private(set) var workItems: [WorkItemEntry] = []
+  private(set) var additionalPRs: [AdditionalPREntry] = []
   /// A work-item link found in the PR description that isn't in the configured
   /// list yet — offered as a "Confirm" suggestion, never added automatically.
   private(set) var detectedWorkItem: WorkItemURL?
@@ -88,8 +99,9 @@ final class WorktreeAzureModel {
     }
 
     await resolveWorkItems(worktree: worktree, branch: branch, prDescription: pr?.description)
+    await resolveAdditionalPRs(worktree: worktree, branch: branch)
 
-    if remote == nil && workItems.isEmpty && detectedWorkItem == nil {
+    if remote == nil && workItems.isEmpty && detectedWorkItem == nil && additionalPRs.isEmpty {
       phase = .notConfigured
     } else if let prFailure, workItems.isEmpty {
       phase = .failed(prFailure.localizedDescription)
@@ -130,6 +142,27 @@ final class WorktreeAzureModel {
     workItems.sort { configured.firstIndex(of: $0.url) ?? 0 < configured.firstIndex(of: $1.url) ?? 0 }
 
     detectedWorkItem = WorkItemResolver.detect(in: prDescription, excluding: configured)
+  }
+
+  private func resolveAdditionalPRs(worktree: WorktreeInfo, branch: String) async {
+    let config = BranchConfig.load(worktree: worktree.url, branch: branch)
+    let configured = config.additionalPRURLs.compactMap { PullRequestURL.parse($0) }
+    for prURL in configured { AzureSettingsStore.addManualOrg(prURL.org) }
+
+    additionalPRs = await withTaskGroup(of: AdditionalPREntry.self) { group in
+      for prURL in configured {
+        group.addTask {
+          let remote = AzureRemote(org: prURL.org, project: prURL.project, repo: prURL.repo)
+          let pull = try? await self.service.pullRequest(remote: remote, id: prURL.id)
+          return AdditionalPREntry(url: prURL, pr: pull)
+        }
+      }
+      var results: [AdditionalPREntry] = []
+      for await entry in group { results.append(entry) }
+      return results
+    }
+    // withTaskGroup doesn't preserve submission order.
+    additionalPRs.sort { configured.firstIndex(of: $0.url) ?? 0 < configured.firstIndex(of: $1.url) ?? 0 }
   }
 
   /// The latest pipeline build for the branch — always carries a working link

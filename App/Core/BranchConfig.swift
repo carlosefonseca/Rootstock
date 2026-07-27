@@ -18,6 +18,9 @@ struct BranchConfig {
   var dsDep: String?       // DS_DEP
   // New Rootstock keys (shared).
   var workItemURLs: [String] = []  // WORK_ITEM_URLS — comma-separated full URLs
+  /// PRs beyond the one auto-detected by source branch name — e.g. when the
+  /// work was split across several PRs.
+  var additionalPRURLs: [String] = []  // ADDITIONAL_PR_URLS — comma-separated full URLs
   var figmaURL: String?    // FIGMA_URL
   var slackChannelURL: String? // SLACK_CHANNEL_URL
 
@@ -27,7 +30,7 @@ struct BranchConfig {
   private var passthrough: [String] = []
 
   private static let known = ["PRJ_DEP", "DS_BRANCH", "DS_DEP",
-                              "WORK_ITEM_URLS", "FIGMA_URL", "SLACK_CHANNEL_URL"]
+                              "WORK_ITEM_URLS", "ADDITIONAL_PR_URLS", "FIGMA_URL", "SLACK_CHANNEL_URL"]
 
   static func fileName(forBranch branch: String) -> String {
     branch.replacingOccurrences(of: "/", with: "__") + ".conf"
@@ -74,6 +77,10 @@ struct BranchConfig {
         config.workItemURLs = value.split(separator: ",")
           .map { $0.trimmingCharacters(in: .whitespaces) }
           .filter { !$0.isEmpty }
+      case "ADDITIONAL_PR_URLS":
+        config.additionalPRURLs = value.split(separator: ",")
+          .map { $0.trimmingCharacters(in: .whitespaces) }
+          .filter { !$0.isEmpty }
       case "FIGMA_URL": config.figmaURL = value
       case "SLACK_CHANNEL_URL": config.slackChannelURL = value
       default: break
@@ -97,6 +104,7 @@ struct BranchConfig {
     emit("DS_BRANCH", dsBranch)
     emit("DS_DEP", dsDep)
     if !workItemURLs.isEmpty { lines.append("WORK_ITEM_URLS=\"\(workItemURLs.joined(separator: ","))\"") }
+    if !additionalPRURLs.isEmpty { lines.append("ADDITIONAL_PR_URLS=\"\(additionalPRURLs.joined(separator: ","))\"") }
     emit("FIGMA_URL", figmaURL)
     emit("SLACK_CHANNEL_URL", slackChannelURL)
     lines.append(contentsOf: passthrough)

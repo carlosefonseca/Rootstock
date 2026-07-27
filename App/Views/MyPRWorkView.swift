@@ -115,7 +115,7 @@ private struct PRWorkRow: View {
         }
       }
       if hiddenCommentCount > 0 {
-        Text("+\(hiddenCommentCount) more").font(.caption2).foregroundStyle(.tertiary)
+        Text("+\(String(hiddenCommentCount)) more").font(.caption2).foregroundStyle(.tertiary)
       }
     }
     .padding(.vertical, 2)
@@ -163,11 +163,7 @@ private struct AuthorAvatar: View {
     .frame(width: 16, height: 16)
     .clipShape(.circle)
     .task(id: identity.imageUrl) {
-      guard let urlString = identity.imageUrl,
-            let data = await AvatarCache.shared.data(org: org, urlString: urlString),
-            let loaded = NSImage(data: data)
-      else { return }
-      image = loaded
+      image = await AvatarCache.loadImage(org: org, urlString: identity.imageUrl)
     }
   }
 }

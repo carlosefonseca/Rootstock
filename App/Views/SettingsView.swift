@@ -106,7 +106,7 @@ private struct GeneralSettingsView: View {
 
         LabeledContent("Font size") {
           HStack(spacing: 6) {
-            Text("\(Int(fontSize)) pt").foregroundStyle(.secondary).monospacedDigit()
+            Text("\(String(Int(fontSize))) pt").foregroundStyle(.secondary).monospacedDigit()
             Stepper("", value: $fontSize, in: 8...24, step: 1).labelsHidden()
           }
         }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Azure DevOps card: pull request, pipeline, and work item for the worktree.
@@ -70,6 +71,15 @@ struct AzureSection: View {
   @ViewBuilder private var loadedContent: some View {
     PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipeline: model.pipeline, remote: model.remote,
                     branch: worktree.branch, worktree: worktree, tabsStore: tabsStore)
+    if !model.additionalPRs.isEmpty {
+      Divider()
+      VStack(alignment: .leading, spacing: 10) {
+        Label("Additional Pull Requests", systemImage: "arrow.triangle.pull").font(.subheadline.weight(.medium))
+        ForEach(model.additionalPRs) { entry in
+          AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore)
+        }
+      }
+    }
     if !model.workItems.isEmpty || model.detectedWorkItem != nil {
       Divider()
       VStack(alignment: .leading, spacing: 10) {
@@ -125,7 +135,7 @@ private struct PullRequestCard: View {
         Text(pr.title).font(.callout).lineLimit(2)
 
         if let reviewers = pr.reviewers, !reviewers.isEmpty {
-          ReviewerRow(reviewers: reviewers)
+          ReviewerRow(reviewers: reviewers, org: remote?.org ?? "")
         }
         if unresolved > 0 {
           Label("\(unresolved) unresolved comment\(unresolved == 1 ? "" : "s")",
@@ -151,11 +161,12 @@ private struct PullRequestCard: View {
 
 private struct ReviewerRow: View {
   var reviewers: [ADOReviewer]
+  var org: String
 
   var body: some View {
     HStack(spacing: 4) {
       ForEach(reviewers) { reviewer in
-        ReviewerChip(reviewer: reviewer)
+        ReviewerChip(reviewer: reviewer, org: org)
       }
     }
   }
@@ -163,21 +174,39 @@ private struct ReviewerRow: View {
 
 private struct ReviewerChip: View {
   var reviewer: ADOReviewer
+  var org: String
+
+  @State private var image: NSImage?
 
   var body: some View {
-    Text(initials(reviewer.displayName))
-      .font(.caption2.weight(.bold))
-      .foregroundStyle(.white)
-      .frame(width: 24, height: 24)
-      .background(color, in: .circle)
-      .overlay(alignment: .bottomTrailing) {
+    Group {
+      if let image {
+        Image(nsImage: image).resizable()
+      } else {
+        Text(initials(reviewer.displayName))
+          .font(.caption2.weight(.bold))
+          .foregroundStyle(.white)
+          .frame(width: 24, height: 24)
+          .background(color, in: .circle)
+      }
+    }
+    .frame(width: 24, height: 24)
+    .clipShape(.circle)
+    .overlay(alignment: .bottomTrailing) {
+      // No vote yet isn't actionable, so it gets no badge at all rather than
+      // a gray circle that reads as clutter without conveying anything.
+      if reviewer.voteKind != .noVote {
         Image(systemName: icon)
           .font(.system(size: 8, weight: .bold))
           .foregroundStyle(color)
           .padding(1)
           .background(.background, in: .circle)
       }
-      .help("\(reviewer.displayName) — \(voteText)")
+    }
+    .help("\(reviewer.displayName) — \(voteText)")
+    .task(id: reviewer.imageUrl) {
+      image = await AvatarCache.loadImage(org: org, urlString: reviewer.imageUrl)
+    }
   }
 
   private var color: Color {
@@ -261,6 +290,39 @@ private struct PipelinePill: View {
     case .failed: return .red
     case .running: return .orange
     case .none: return .secondary
+    }
+  }
+}
+
+// MARK: Additional pull requests
+
+/// A PR attached to the branch beyond the one auto-detected by source branch
+/// name — e.g. the work was split across several PRs.
+private struct AdditionalPRCard: View {
+  var entry: WorktreeAzureModel.AdditionalPREntry
+  var worktree: WorktreeInfo
+  var tabsStore: WorktreeTabsStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        if let pr = entry.pr {
+          StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
+                     tint: (pr.isDraft ?? false) ? .secondary : .blue)
+          if pr.mergeStatus == "conflicts" { StatusPill(text: "Conflicts", tint: .red) }
+        }
+        // String(_:), not raw Int interpolation — Text(_:) parses an
+        // interpolated Int through LocalizedStringKey's number formatting,
+        // which inserts a locale thousands separator for values >= 1000.
+        Text("#\(String(entry.url.id))").font(.caption.monospaced()).foregroundStyle(.secondary)
+        Spacer()
+        Button("Open", systemImage: "arrow.up.right.square") {
+          WebLinkOpener.open(entry.url.canonical, title: "PR #\(entry.url.id)",
+                             systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
+        }
+        .controlSize(.small).labelStyle(.iconOnly)
+      }
+      if let title = entry.pr?.title { Text(title).font(.callout).lineLimit(2) }
     }
   }
 }

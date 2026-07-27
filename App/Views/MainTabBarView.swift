@@ -193,6 +193,7 @@ private struct TabChip: View {
     .background(isSelected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
     .contentShape(.rect)
     .onTapGesture { select() }
+    .onMiddleClick { close() }
     .onHover { hovering = $0 }
     .help(tab.displayTitle)
   }

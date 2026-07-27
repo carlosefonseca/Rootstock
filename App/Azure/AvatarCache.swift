@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// In-memory cache for ADO identity avatars, keyed by the avatar URL. Actor
@@ -21,5 +22,13 @@ actor AvatarCache {
     inFlight[urlString] = nil
     if let result { cache[urlString] = result }
     return result
+  }
+
+  /// Convenience for the common `.task(id:)` pattern every avatar view uses:
+  /// fetch-and-decode in one call, `nil` on any failure (no avatar set, no
+  /// network, bad data) so callers just fall back to a placeholder.
+  nonisolated static func loadImage(org: String, urlString: String?) async -> NSImage? {
+    guard let urlString, let data = await shared.data(org: org, urlString: urlString) else { return nil }
+    return NSImage(data: data)
   }
 }

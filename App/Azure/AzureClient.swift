@@ -4,6 +4,7 @@ enum AzureError: LocalizedError {
   case noCredential(org: String)
   case http(status: Int, message: String)
   case decoding(String)
+  case expiredSession(org: String)
 
   var errorDescription: String? {
     switch self {
@@ -13,8 +14,14 @@ enum AzureError: LocalizedError {
       return "Azure DevOps returned \(status)\(message.isEmpty ? "" : ": \(message)")"
     case .decoding(let detail):
       return "Couldn't read the Azure DevOps response (\(detail))."
+    case .expiredSession(let org):
+      return "Your Azure DevOps session for \(org) looks expired — sign in again with `az login`, or check the PAT in Settings."
     }
   }
+}
+
+private extension UInt8 {
+  var isWhitespaceASCII: Bool { self == 0x20 || self == 0x09 || self == 0x0A || self == 0x0D }
 }
 
 /// A small `URLSession` REST client for Azure DevOps at `api-version=7.1`. No SDK
@@ -51,6 +58,13 @@ struct AzureClient {
       if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
          let m = json["message"] as? String { message = m }
       throw AzureError.http(status: status, message: message)
+    }
+    // An expired/invalid AAD session can get a 200 OK sign-in page back
+    // instead of JSON (the failure that actually prompted this check) rather
+    // than a clean 401 — surface that plainly instead of a raw JSON parsing
+    // error that gives no hint of what actually went wrong.
+    if let firstByte = data.first(where: { !$0.isWhitespaceASCII }), firstByte == UInt8(ascii: "<") {
+      throw AzureError.expiredSession(org: org)
     }
     do {
       return try JSONDecoder().decode(T.self, from: data)

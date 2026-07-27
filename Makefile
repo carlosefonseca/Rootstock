@@ -6,8 +6,16 @@
 # (releases/latest/download/appcast.xml) always resolves to whatever the most
 # recent release published, so nothing else needs to change per release.
 
+# Offset, not raw `git rev-list --count HEAD`: the repo's history was reset
+# once already (the old v1.0.0 was built at commit count 23; today's HEAD is
+# only ~15 commits into the rewritten history), which silently produced a
+# LOWER Sparkle build number for a "newer" release — Sparkle compares
+# sparkle:version (this number), not the marketing version string, so it told
+# users on 1.0.0 they were already up to date. 1000 gives enormous headroom
+# against that ever happening again unnoticed.
 REPO := carlosefonseca/Rootstock
-BUILD_NUMBER := $(shell git rev-list --count HEAD)
+COMMIT_COUNT := $(shell git rev-list --count HEAD)
+BUILD_NUMBER := $(shell echo $$(( $(COMMIT_COUNT) + 1000 )))
 
 APPLE_ID := carlosefonseca@gmail.com
 TEAM_ID := VF8BTMF3F4

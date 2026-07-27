@@ -49,6 +49,13 @@ final class WebTabSession: NSObject {
     if isLoading { webView.stopLoading() } else { webView.reload() }
   }
 
+  /// Backs the Cmd+/Cmd- "zoom" shortcut when this tab is focused — per-tab,
+  /// not a shared preference, since it's really about this page's content
+  /// rather than an app-wide setting (unlike the terminal's font size).
+  func zoomIn() { webView.pageZoom = min(3.0, webView.pageZoom + 0.1) }
+  func zoomOut() { webView.pageZoom = max(0.5, webView.pageZoom - 0.1) }
+  func zoomReset() { webView.pageZoom = 1.0 }
+
   static func normalizedURL(_ raw: String) -> URL? {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }

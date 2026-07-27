@@ -78,12 +78,48 @@ struct MainTabBarView: View {
         }
       }
       .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
+      // Cmd+/Cmd- "zoom", scoped to whichever tab is focused: the terminal's
+      // font size (a shared preference, same one Settings' stepper drives) for
+      // a terminal tab, or that page's own WKWebView zoom for a web tab — Cmd+=
+      // bound too since "+" needs Shift on most keyboards but people reach for
+      // either.
+      Group {
+        Button("", action: zoomIn).keyboardShortcut("+", modifiers: .command)
+        Button("", action: zoomIn).keyboardShortcut("=", modifiers: .command)
+        Button("", action: zoomOut).keyboardShortcut("-", modifiers: .command)
+        Button("", action: zoomReset).keyboardShortcut("0", modifiers: .command)
+      }
+      .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
     }
   }
 
   private func selectTab(at index: Int) {
     guard tabs.indices.contains(index) else { return }
     tabsStore.select(tabs[index].id, for: worktree)
+  }
+
+  private func zoomIn() {
+    switch selectedTab?.kind {
+    case .terminal: AppSettings.adjustTerminalFontSize(by: 1)
+    case .web: selectedTab?.webSession?.zoomIn()
+    case nil: break
+    }
+  }
+
+  private func zoomOut() {
+    switch selectedTab?.kind {
+    case .terminal: AppSettings.adjustTerminalFontSize(by: -1)
+    case .web: selectedTab?.webSession?.zoomOut()
+    case nil: break
+    }
+  }
+
+  private func zoomReset() {
+    switch selectedTab?.kind {
+    case .terminal: AppSettings.resetTerminalFontSize()
+    case .web: selectedTab?.webSession?.zoomReset()
+    case nil: break
+    }
   }
 
   private var tabBar: some View {

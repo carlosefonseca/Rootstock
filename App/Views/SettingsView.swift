@@ -51,6 +51,9 @@ private struct ShortcutsSettingsView: View {
       Shortcut(action: "Previous Tab", keys: "⌃⇧⇥"),
       Shortcut(action: "New Terminal Tab", keys: "⌘T"),
       Shortcut(action: "New Web Tab", keys: "⌘⇧T"),
+      Shortcut(action: "Zoom In (terminal font / web page)", keys: "⌘+"),
+      Shortcut(action: "Zoom Out (terminal font / web page)", keys: "⌘−"),
+      Shortcut(action: "Reset Zoom", keys: "⌘0"),
     ]),
   ]
 

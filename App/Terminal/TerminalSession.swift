@@ -3,6 +3,22 @@ import Observation
 import SwiftTerm
 import AppKit
 
+/// Copies the selection to the clipboard as it's made — the "select to copy"
+/// convention most terminal emulators (Terminal.app, iTerm2) follow, instead
+/// of requiring an explicit Cmd+C. `selectionChanged` is `open` on
+/// `TerminalView` but the `selection` property backing `copy(_:)` is
+/// module-internal, so this goes through the public `getSelection()` instead
+/// of reimplementing what `copy(_:)` already does.
+final class CopyOnSelectTerminalView: LocalProcessTerminalView {
+  override func selectionChanged(source: Terminal) {
+    super.selectionChanged(source: source)
+    guard let text = getSelection(), !text.isEmpty else { return }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+  }
+}
+
 /// One live PTY-backed terminal bound to a tab. Wraps SwiftTerm's
 /// `LocalProcessTerminalView` so the same running process can be shown, detached,
 /// and shown again as the user switches worktrees, tabs, or reopens the window.
@@ -22,7 +38,7 @@ final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDel
     self.id = id
     self.directory = directory
     self.title = title
-    self.terminalView = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
+    self.terminalView = CopyOnSelectTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
     super.init()
     terminalView.processDelegate = self
     terminalView.font = AppSettings.terminalFont()

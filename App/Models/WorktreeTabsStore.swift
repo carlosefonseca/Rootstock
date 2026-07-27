@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WebKit
 
 /// A tab's persisted shape — just enough to recreate it on next launch. Live
 /// session state (a running shell, a loaded page) can't survive a restart, so
@@ -174,6 +175,26 @@ final class WorktreeTabsStore {
     case .web:
       return makeWebTab(title: saved.title, systemImage: saved.systemImage,
                         urlString: saved.urlString ?? "about:blank", worktree: worktree)
+    }
+  }
+
+  // MARK: Web data
+
+  /// Wipes everything WebKit's shared data store holds — cookies, cache,
+  /// local/session storage, service workers, IndexedDB — across every web
+  /// tab, then reloads whichever ones are currently open. A last-resort reset
+  /// for a site session that's gotten stuck in a bad state no amount of
+  /// logging out/in fixes (e.g. a stale cookie/cache combination left behind
+  /// by a broken auth redirect).
+  func clearAllWebData() {
+    let types = WKWebsiteDataStore.allWebsiteDataTypes()
+    WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) { [weak self] in
+      guard let self else { return }
+      for tabs in self.tabsByWorktree.values {
+        for tab in tabs where tab.kind == .web {
+          tab.webSession?.webView.reloadFromOrigin()
+        }
+      }
     }
   }
 

@@ -42,6 +42,9 @@ struct RootstockApp: App {
         Button("Previous Worktree") { workspace.selectAdjacentWorktree(offset: -1) }
           .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
       }
+      CommandGroup(after: .toolbar) {
+        Button("Clear All Web Data") { tabsStore.clearAllWebData() }
+      }
     }
 
     Settings {

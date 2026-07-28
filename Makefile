@@ -75,9 +75,17 @@ release: sparkle-tools ## Builds, signs, notarizes, and publishes a GitHub relea
 	@echo "==> Packaging"
 	mkdir -p "$(RELEASE_DIR)/archive"
 	ditto -c -k --keepParent "$(APP_PATH)" "$(RELEASE_DIR)/archive/Rootstock-$(VERSION).zip"
+	@echo "==> Writing release notes"
+	@PREV_TAG=$$(git describe --tags --abbrev=0 2>/dev/null || true); \
+	if [ -n "$$PREV_TAG" ]; then RANGE="$$PREV_TAG..HEAD"; else RANGE="HEAD"; fi; \
+	{ echo "<ul>"; \
+	  git log $$RANGE --pretty=format:'%s' | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/^/<li>/' -e 's/$$/<\/li>/'; \
+	  echo "</ul>"; \
+	} > "$(RELEASE_DIR)/archive/Rootstock-$(VERSION).html"
 	@echo "==> Generating Sparkle appcast"
 	$(SPARKLE_TOOLS)/generate_appcast "$(RELEASE_DIR)/archive" \
-		--download-url-prefix "https://github.com/$(REPO)/releases/download/v$(VERSION)/"
+		--download-url-prefix "https://github.com/$(REPO)/releases/download/v$(VERSION)/" \
+		--embed-release-notes
 	@echo "==> Publishing GitHub release v$(VERSION)"
 	gh release create "v$(VERSION)" \
 		"$(RELEASE_DIR)/archive/Rootstock-$(VERSION).zip" \

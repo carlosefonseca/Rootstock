@@ -153,6 +153,19 @@ final class WorktreeTabsStore {
     persist()
   }
 
+  /// Reorders `id` to sit immediately before `targetID` within the worktree's
+  /// tab list — called repeatedly as a dragged tab hovers over its neighbors,
+  /// so the bar reorders live rather than only on drop.
+  func moveTab(_ id: MainTab.ID, before targetID: MainTab.ID, for worktree: WorktreeInfo) {
+    guard var tabs = tabsByWorktree[worktree.path],
+          let fromIndex = tabs.firstIndex(where: { $0.id == id }), id != targetID else { return }
+    let tab = tabs.remove(at: fromIndex)
+    let toIndex = tabs.firstIndex(where: { $0.id == targetID }) ?? tabs.count
+    tabs.insert(tab, at: toIndex)
+    tabsByWorktree[worktree.path] = tabs
+    persist()
+  }
+
   private func makeTerminalTab(for worktree: WorktreeInfo, title: String) -> MainTab {
     let session = TerminalSession(id: UUID().uuidString, directory: worktree.url, title: title)
     session.start(initialCommand: initialCommands[worktree.path])

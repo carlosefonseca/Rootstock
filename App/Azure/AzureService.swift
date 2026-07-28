@@ -110,10 +110,14 @@ struct AzureService {
     let latestBranch = firstPerDefinition(await branchBuilds)
     let latestPR = firstPerDefinition(prBuilds)
 
+    // Compared by build id (monotonically increasing per org as builds are
+    // queued), not finishTimeDate: a just-triggered build hasn't finished yet
+    // so its finishTime is nil, which would otherwise always lose to an
+    // already-completed build from the other source.
     var merged: [Int: (build: ADOBuild, source: BuildSource)] = [:]
     for (id, build) in latestBranch { merged[id] = (build, .branch) }
     for (id, build) in latestPR {
-      if let existing = merged[id], (existing.build.finishTimeDate ?? .distantPast) > (build.finishTimeDate ?? .distantPast) {
+      if let existing = merged[id], existing.build.id > build.id {
         continue
       }
       merged[id] = (build, .pullRequest)

@@ -108,8 +108,6 @@ struct ADOBuild: Decodable, Identifiable {
     return formatter
   }()
   private static let dateFormatter = ISO8601DateFormatter()
-  /// Used to pick the more recent of two builds for the same pipeline
-  /// definition when merging branch-push and PR-validation build lists.
   /// ADO's `finishTime` usually has fractional seconds, but isn't guaranteed to.
   var finishTimeDate: Date? {
     finishTime.flatMap { Self.dateFormatterWithFraction.date(from: $0) ?? Self.dateFormatter.date(from: $0) }

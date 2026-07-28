@@ -295,6 +295,20 @@ private struct PipelinePill: View {
     .help(pipeline.url != nil
           ? "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text). Click to open."
           : "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text)")
+    .contextMenu {
+      Button("Copy Name") { copy(pipeline.name) }
+      if let label = pipeline.label {
+        Button("Copy Build Number") { copy(label) }
+      }
+      if let url = pipeline.url {
+        Button("Copy URL") { copy(url) }
+      }
+    }
+  }
+
+  private func copy(_ string: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(string, forType: .string)
   }
 
   private var sourceLabel: String {

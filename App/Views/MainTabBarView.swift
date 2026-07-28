@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The main area for a worktree: a tab bar (terminal, work item, Figma, and any
 /// tabs the user opens) above whichever tab is selected. Tabs are per-worktree
@@ -12,6 +13,10 @@ struct MainTabBarView: View {
   private var tabs: [MainTab] { tabsStore.tabs(for: worktree) }
   private var selectedID: MainTab.ID? { tabsStore.selectedTabID(for: worktree) }
   private var selectedTab: MainTab? { tabs.first { $0.id == selectedID } }
+
+  /// The tab currently being dragged for reordering — tracked so the drop
+  /// delegate can tell which chip is moving as it hovers over neighbors.
+  @State private var draggedTabID: MainTab.ID?
 
   /// The clone's local-only terminal init command — typed into every new
   /// terminal tab's shell right after it starts.
@@ -130,6 +135,13 @@ struct MainTabBarView: View {
             TabChip(tab: tab, isSelected: tab.id == selectedID,
                     select: { tabsStore.select(tab.id, for: worktree) },
                     close: { tabsStore.close(tab.id, for: worktree) })
+              .onDrag {
+                draggedTabID = tab.id
+                return NSItemProvider(object: tab.id.uuidString as NSString)
+              }
+              .onDrop(of: [.text], delegate: TabDropDelegate(
+                target: tab, tabs: tabs, draggedTabID: $draggedTabID,
+                move: { id, targetID in tabsStore.moveTab(id, before: targetID, for: worktree) }))
           }
         }
       }
@@ -240,5 +252,30 @@ private struct TabChip: View {
     } else {
       Image(systemName: tab.systemImage).font(.caption2).frame(width: 14, height: 14)
     }
+  }
+}
+
+/// Reorders tabs live as a dragged chip hovers over its neighbors, rather
+/// than only on drop — the behavior every browser's tab bar has trained
+/// people to expect.
+private struct TabDropDelegate: DropDelegate {
+  var target: MainTab
+  var tabs: [MainTab]
+  @Binding var draggedTabID: MainTab.ID?
+  var move: (_ id: MainTab.ID, _ before: MainTab.ID) -> Void
+
+  func dropEntered(info: DropInfo) {
+    guard let draggedTabID, draggedTabID != target.id,
+          tabs.contains(where: { $0.id == draggedTabID }) else { return }
+    move(draggedTabID, target.id)
+  }
+
+  func dropUpdated(info: DropInfo) -> DropProposal? {
+    DropProposal(operation: .move)
+  }
+
+  func performDrop(info: DropInfo) -> Bool {
+    draggedTabID = nil
+    return true
   }
 }

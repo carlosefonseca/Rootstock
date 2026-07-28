@@ -8,9 +8,15 @@ struct NewWorktreeView: View {
   @Environment(\.dismiss) private var dismiss
 
   enum Source: String, CaseIterable, Identifiable {
-    case newBranch, existingBranch
+    case newBranch, existingBranch, pullRequest
     var id: String { rawValue }
-    var label: String { self == .newBranch ? "New branch" : "Existing branch" }
+    var label: String {
+      switch self {
+      case .newBranch: return "New branch"
+      case .existingBranch: return "Existing branch"
+      case .pullRequest: return "Pull request"
+      }
+    }
   }
 
   enum WorkItemType: String, CaseIterable, Identifiable {
@@ -38,8 +44,16 @@ struct NewWorktreeView: View {
 
   // Existing-branch state.
   @State private var existingBranch = ""
+  @State private var branchSearchText = ""
   @State private var localBranches: [String] = []
   @State private var remoteBranches: [String] = []
+
+  // Pull-request state.
+  @State private var prs: [ADOPullRequest] = []
+  @State private var selectedPRId: Int?
+  @State private var prSearchText = ""
+  @State private var prLoading = false
+  @State private var prError: String?
 
   private var selectedClone: TrackedClone? {
     workspace.clones.first { $0.commonDir == selectedCloneID }
@@ -48,6 +62,18 @@ struct NewWorktreeView: View {
   private var isRemoteSelection: Bool { existingBranch.hasPrefix("origin/") }
   private var existingLocalName: String {
     isRemoteSelection ? String(existingBranch.dropFirst("origin/".count)) : existingBranch
+  }
+
+  private var selectedPR: ADOPullRequest? {
+    guard let selectedPRId else { return nil }
+    return prs.first { $0.id == selectedPRId }
+  }
+
+  /// A worktree for the selected PR's branch already exists — offer to jump
+  /// to it instead of creating a duplicate one.
+  private var existingWorktreeForSelectedPR: WorktreeInfo? {
+    guard let selectedPR, let clone = selectedClone, let sourceBranch = selectedPR.sourceBranch else { return nil }
+    return workspace.worktree(in: clone, branch: sourceBranch)
   }
 
   private var parsedWorkItem: WorkItemURL? { WorkItemURL.parse(workItemURLText) }
@@ -61,8 +87,26 @@ struct NewWorktreeView: View {
     return "\(type.rawValue)/\(idPart)\(slug)"
   }
 
+  /// Characters git rejects in a ref name (control chars, space, and
+  /// `~^:?*[\`) — replaced with `-` as the user types rather than left to
+  /// surface as a shell/git error only once they hit Create.
+  private static let branchInvalidCharacters: CharacterSet = {
+    var set = CharacterSet(charactersIn: " ~^:?*[\\")
+    set.formUnion(.controlCharacters)
+    return set
+  }()
+
+  private func sanitizeBranchInput(_ text: String) -> String {
+    String(String.UnicodeScalarView(text.unicodeScalars.map {
+      Self.branchInvalidCharacters.contains($0) ? Unicode.Scalar("-") : $0
+    }))
+  }
+
   private var effectiveBranch: String {
-    source == .newBranch ? (branchEdited ? branch : derivedBranch) : existingLocalName
+    switch source {
+    case .newBranch: return branchEdited ? branch : derivedBranch
+    case .existingBranch, .pullRequest: return existingLocalName
+    }
   }
 
   private var targetPath: URL? {
@@ -90,10 +134,10 @@ struct NewWorktreeView: View {
           }
         }
 
-        if source == .existingBranch {
-          existingBranchSection
-        } else {
-          newBranchSection
+        switch source {
+        case .existingBranch: existingBranchSection
+        case .pullRequest: pullRequestSection
+        case .newBranch: newBranchSection
         }
 
         Section("Work item") {
@@ -135,7 +179,7 @@ struct NewWorktreeView: View {
       HStack {
         Spacer()
         Button("Cancel") { dismiss() }
-        Button("Create Worktree") { create() }
+        Button(existingWorktreeForSelectedPR != nil ? "Open Worktree" : "Create Worktree") { create() }
           .keyboardShortcut(.defaultAction)
           .disabled(!canCreate || creating)
       }
@@ -143,38 +187,136 @@ struct NewWorktreeView: View {
     }
     .frame(width: 520, height: 640)
     .onAppear { if selectedCloneID == nil { selectedCloneID = workspace.clones.first?.commonDir } }
-    .onChange(of: selectedCloneID) { reloadBranches() }
-    .onChange(of: source) { reloadBranches() }
+    .onChange(of: selectedCloneID) { reloadBranches(); loadPullRequests() }
+    .onChange(of: source) { reloadBranches(); loadPullRequests() }
+    .onChange(of: selectedPRId) {
+      if let sourceBranch = selectedPR?.sourceBranch { existingBranch = "origin/\(sourceBranch)" }
+    }
   }
 
   @ViewBuilder private var newBranchSection: some View {
     Section("Branch") {
       TextField("Branch", text: Binding(
         get: { effectiveBranch },
-        set: { branch = $0; branchEdited = true }))
+        set: { branch = sanitizeBranchInput($0); branchEdited = true }))
         .font(.body.monospaced())
       TextField("Base branch", text: $baseBranch, prompt: Text("develop"))
       locationRow
     }
   }
 
+  private var filteredLocalBranches: [String] {
+    branchSearchText.isEmpty ? localBranches : localBranches.filter { $0.localizedCaseInsensitiveContains(branchSearchText) }
+  }
+
+  private var filteredRemoteBranches: [String] {
+    branchSearchText.isEmpty ? remoteBranches : remoteBranches.filter { $0.localizedCaseInsensitiveContains(branchSearchText) }
+  }
+
   @ViewBuilder private var existingBranchSection: some View {
     Section("Branch") {
-      Picker("Branch", selection: $existingBranch) {
-        Text("Choose…").tag("")
-        if !localBranches.isEmpty {
-          ForEach(localBranches, id: \.self) { Text($0).tag($0) }
-        }
-        if !remoteBranches.isEmpty {
-          Divider()
-          ForEach(remoteBranches, id: \.self) { Text($0).tag($0) }
+      HStack {
+        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+        TextField("Search branches", text: $branchSearchText)
+          .textFieldStyle(.plain)
+        if !branchSearchText.isEmpty {
+          Button {
+            branchSearchText = ""
+          } label: {
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+          }
+          .buttonStyle(.plain)
         }
       }
-      if isRemoteSelection {
-        Text("Creates local branch \(existingLocalName) tracking \(existingBranch).")
+      List(selection: Binding(
+        get: { existingBranch.isEmpty ? nil : existingBranch },
+        set: { existingBranch = $0 ?? "" }
+      )) {
+        if !filteredLocalBranches.isEmpty {
+          Section("Local") {
+            ForEach(filteredLocalBranches, id: \.self) { Text($0).tag($0) }
+          }
+        }
+        if !filteredRemoteBranches.isEmpty {
+          Section("Remote") {
+            ForEach(filteredRemoteBranches, id: \.self) { Text($0).tag($0) }
+          }
+        }
+        if filteredLocalBranches.isEmpty && filteredRemoteBranches.isEmpty {
+          Text("No matching branches").foregroundStyle(.secondary)
+        }
+      }
+      .frame(height: 160)
+      if !existingBranch.isEmpty {
+        Text(isRemoteSelection
+             ? "Creates local branch \(existingLocalName) tracking \(existingBranch)."
+             : "Selected: \(existingBranch)")
           .font(.caption).foregroundStyle(.secondary)
       }
       locationRow
+    }
+  }
+
+  private var filteredPRs: [ADOPullRequest] {
+    guard !prSearchText.isEmpty else { return prs }
+    return prs.filter {
+      $0.title.localizedCaseInsensitiveContains(prSearchText) ||
+      ($0.sourceBranch?.localizedCaseInsensitiveContains(prSearchText) ?? false) ||
+      String($0.pullRequestId).contains(prSearchText)
+    }
+  }
+
+  @ViewBuilder private var pullRequestSection: some View {
+    Section("Pull Request") {
+      HStack {
+        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+        TextField("Search pull requests", text: $prSearchText)
+          .textFieldStyle(.plain)
+        if prLoading { ProgressView().controlSize(.small) }
+        if !prSearchText.isEmpty {
+          Button {
+            prSearchText = ""
+          } label: {
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      if let prError {
+        Label(prError, systemImage: "exclamationmark.triangle")
+          .font(.caption).foregroundStyle(.orange)
+      }
+      List(selection: $selectedPRId) {
+        ForEach(filteredPRs) { pr in
+          VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+              Text("#\(pr.pullRequestId)").font(.caption.monospaced()).foregroundStyle(.secondary)
+              Text(pr.title).lineLimit(1)
+              if pr.isDraft ?? false { StatusPill(text: "Draft", tint: .gray) }
+            }
+            if let sourceBranch = pr.sourceBranch {
+              Text(sourceBranch).font(.caption.monospaced()).foregroundStyle(.secondary)
+            }
+          }
+          .tag(pr.id)
+        }
+        if !prLoading && prError == nil && filteredPRs.isEmpty {
+          Text(prs.isEmpty ? "No active pull requests." : "No matching pull requests.")
+            .foregroundStyle(.secondary)
+        }
+      }
+      .frame(height: 160)
+
+      if selectedPR != nil {
+        if let existing = existingWorktreeForSelectedPR {
+          Label("Worktree already exists at \(existing.path)", systemImage: "checkmark.circle")
+            .font(.caption).foregroundStyle(.secondary)
+        } else {
+          Text("Creates local branch \(existingLocalName) tracking \(existingBranch).")
+            .font(.caption).foregroundStyle(.secondary)
+          locationRow
+        }
+      }
     }
   }
 
@@ -191,15 +333,20 @@ struct NewWorktreeView: View {
   }
 
   private var canCreate: Bool {
-    guard selectedClone != nil, targetPath != nil, !creating else { return false }
+    guard !creating else { return false }
+    if source == .pullRequest, existingWorktreeForSelectedPR != nil { return true }
+    guard selectedClone != nil, targetPath != nil else { return false }
     switch source {
     case .newBranch: return !effectiveBranch.hasSuffix("/") && !effectiveBranch.isEmpty && !baseBranch.isEmpty
     case .existingBranch: return !existingBranch.isEmpty
+    case .pullRequest: return selectedPR != nil
     }
   }
 
   private func reloadBranches() {
     fetchedTitle = nil
+    branchSearchText = ""
+    existingBranch = ""
     guard source == .existingBranch, let clone = selectedClone else { return }
     Task {
       let result = await Git.branches(in: clone.rootURL)
@@ -207,6 +354,27 @@ struct NewWorktreeView: View {
       // Hide remotes that already have a local branch of the same name.
       let localSet = Set(result.local)
       remoteBranches = result.remote.filter { !localSet.contains(String($0.dropFirst("origin/".count))) }
+    }
+  }
+
+  private func loadPullRequests() {
+    prError = nil
+    prSearchText = ""
+    selectedPRId = nil
+    prs = []
+    guard source == .pullRequest, let clone = selectedClone else { return }
+    guard let remote = AzureRemote.parse(clone.remoteURL) else {
+      prError = "No Azure DevOps remote found for this clone."
+      return
+    }
+    prLoading = true
+    Task {
+      do {
+        prs = try await AzureService().pullRequests(remote: remote)
+      } catch {
+        prError = error.localizedDescription
+      }
+      prLoading = false
     }
   }
 
@@ -249,6 +417,11 @@ struct NewWorktreeView: View {
   }
 
   private func create() {
+    if source == .pullRequest, let existing = existingWorktreeForSelectedPR {
+      workspace.selectedPath = existing.path
+      dismiss()
+      return
+    }
     guard let clone = selectedClone, let path = targetPath else { return }
     creating = true
     error = nil
@@ -284,7 +457,7 @@ struct NewWorktreeView: View {
     switch source {
     case .newBranch:
       return "git worktree add \(quotedPath) -b '\(effectiveBranch)' 'origin/\(baseBranch)'"
-    case .existingBranch:
+    case .existingBranch, .pullRequest:
       if isRemoteSelection {
         return "git worktree add \(quotedPath) --track -b '\(existingLocalName)' '\(existingBranch)'"
       }

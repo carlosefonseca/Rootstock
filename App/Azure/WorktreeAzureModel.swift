@@ -131,6 +131,14 @@ final class WorktreeAzureModel {
     NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
 
+  /// Removes a configured work item from the branch's shared config and re-fetches.
+  func removeWorkItem(worktree: WorktreeInfo, branch: String, url: WorkItemURL) {
+    var config = BranchConfig.load(worktree: worktree.url, branch: branch)
+    config.workItemURLs.removeAll { $0 == url.canonical }
+    try? config.save(worktree: worktree.url, branch: branch)
+    NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
+  }
+
   private func resolveWorkItems(worktree: WorktreeInfo, branch: String, prDescription: String?) async {
     let config = BranchConfig.load(worktree: worktree.url, branch: branch)
     let configured = config.workItemURLs.compactMap { WorkItemURL.parse($0) }

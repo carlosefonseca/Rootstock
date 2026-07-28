@@ -8,6 +8,15 @@ struct SidebarView: View {
   var body: some View {
     @Bindable var workspace = workspace
     List(selection: $workspace.selectedPath) {
+      if !workspace.recentWorktrees.isEmpty {
+        Section("Recents") {
+          ForEach(workspace.recentWorktrees) { worktree in
+            WorktreeRow(worktree: worktree, status: workspace.statuses[worktree.path],
+                        cloneName: workspace.clone(forWorktree: worktree)?.displayName)
+              .tag(worktree.path)
+          }
+        }
+      }
       ForEach(workspace.clones) { clone in
         Section {
           let rows = workspace.worktrees[clone.commonDir] ?? []
@@ -102,6 +111,7 @@ struct TerminalCommandEditor: View {
 struct WorktreeRow: View {
   var worktree: WorktreeInfo
   var status: WorktreeStatus?
+  var cloneName: String? = nil
 
   var body: some View {
     HStack(spacing: 8) {
@@ -110,7 +120,7 @@ struct WorktreeRow: View {
       VStack(alignment: .leading, spacing: 1) {
         Text(worktree.folderName)
           .lineLimit(1)
-        Text(worktree.displayBranch)
+        Text(subtitle)
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -121,6 +131,11 @@ struct WorktreeRow: View {
       }
     }
     .padding(.vertical, 2)
+  }
+
+  private var subtitle: String {
+    guard let cloneName else { return worktree.displayBranch }
+    return "\(cloneName) · \(worktree.displayBranch)"
   }
 
   private var dotHelp: String {

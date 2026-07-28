@@ -146,7 +146,7 @@ struct MainTabBarView: View {
         }
       }
       Menu {
-        Button("New Terminal Tab", systemImage: "terminal") {
+        Button("New Terminal Tab", systemImage: "terminal.fill") {
           let tab = tabsStore.addTerminalTab(for: worktree, initialCommand: terminalInitCommand)
           tabsStore.select(tab.id, for: worktree)
         }

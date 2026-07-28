@@ -80,16 +80,22 @@ struct AzureSection: View {
         }
       }
     }
-    if !model.workItems.isEmpty || model.detectedWorkItem != nil {
+    if let branch = worktree.branch {
       Divider()
       VStack(alignment: .leading, spacing: 10) {
-        Label("Work Items", systemImage: "checklist").font(.subheadline.weight(.medium))
+        HStack {
+          Label("Work Items", systemImage: "checklist").font(.subheadline.weight(.medium))
+          Spacer()
+          AddWorkItemButton(worktree: worktree, branch: branch)
+        }
         ForEach(model.workItems) { entry in
-          WorkItemCard(entry: entry, worktree: worktree, tabsStore: tabsStore)
+          WorkItemCard(entry: entry, worktree: worktree, tabsStore: tabsStore) {
+            model.removeWorkItem(worktree: worktree, branch: branch, url: entry.url)
+          }
         }
         if let detected = model.detectedWorkItem {
           DetectedWorkItemRow(url: detected) {
-            if let branch = worktree.branch { model.confirmDetectedWorkItem(worktree: worktree, branch: branch) }
+            model.confirmDetectedWorkItem(worktree: worktree, branch: branch)
           }
         }
       }
@@ -388,18 +394,26 @@ private struct WorkItemCard: View {
   var entry: WorktreeAzureModel.WorkItemEntry
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
+  var onRemove: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        if let item = entry.detail {
-          HStack(spacing: 6) {
-            if let type = item.type { StatusPill(text: type, tint: .purple) }
-            if let state = item.state { StatusPill(text: state, tint: .blue) }
-            Text("#\(entry.url.id)").font(.caption.monospaced()).foregroundStyle(.secondary)
+        Group {
+          if let item = entry.detail {
+            HStack(spacing: 6) {
+              if let type = item.type { StatusPill(text: type, tint: .purple) }
+              if let state = item.state { StatusPill(text: state, tint: .blue) }
+              Text("#\(entry.url.id)").font(.caption.monospaced()).foregroundStyle(.secondary)
+            }
+          } else {
+            Text("#\(entry.url.id)").font(.callout.monospaced()).foregroundStyle(.secondary)
           }
-        } else {
-          Text("#\(entry.url.id)").font(.callout.monospaced()).foregroundStyle(.secondary)
+        }
+        .contextMenu {
+          Button("Copy URL") { copy(entry.url.canonical) }
+          Divider()
+          Button("Remove", role: .destructive) { onRemove() }
         }
         Spacer()
         Button("Open", systemImage: "arrow.up.right.square") {
@@ -407,9 +421,82 @@ private struct WorkItemCard: View {
                              systemImage: "checklist", worktree: worktree, tabsStore: tabsStore)
         }
         .controlSize(.small).labelStyle(.iconOnly)
+        Menu {
+          Button("Copy URL") { copy(entry.url.canonical) }
+          Divider()
+          Button("Remove", role: .destructive) { onRemove() }
+        } label: {
+          Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
       }
       if let title = entry.detail?.title { Text(title).font(.callout).lineLimit(2) }
     }
+  }
+
+  private func copy(_ string: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(string, forType: .string)
+  }
+}
+
+/// Popover to paste a work item URL and add it to the branch's shared config —
+/// mirrors `SharedConfigEditor`'s list editor but reachable without opening
+/// the full sheet, for the common case of adding just one.
+private struct AddWorkItemButton: View {
+  var worktree: WorktreeInfo
+  var branch: String
+
+  @State private var showingPopover = false
+  @State private var urlText = ""
+  @State private var error: String?
+  @FocusState private var fieldFocused: Bool
+
+  var body: some View {
+    Button("Add Work Item", systemImage: "plus.circle") { showingPopover = true }
+      .labelStyle(.iconOnly)
+      .buttonStyle(.borderless)
+      .controlSize(.small)
+      .popover(isPresented: $showingPopover) {
+        VStack(alignment: .leading, spacing: 10) {
+          Text("Add Work Item").font(.headline)
+          TextField("Work item URL", text: $urlText,
+                     prompt: Text("https://dev.azure.com/org/project/_workitems/edit/12345"))
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 320)
+            .focused($fieldFocused)
+            .onSubmit { add() }
+          if let error {
+            Text(error).font(.caption).foregroundStyle(.red)
+          }
+          HStack {
+            Spacer()
+            Button("Cancel") { showingPopover = false }
+            Button("Add") { add() }
+              .keyboardShortcut(.defaultAction)
+              .disabled(urlText.isEmpty)
+          }
+        }
+        .padding(16)
+        .onAppear { fieldFocused = true }
+      }
+  }
+
+  private func add() {
+    guard let parsed = WorkItemURL.parse(urlText) else {
+      error = "Not a recognized work item URL"
+      return
+    }
+    var config = BranchConfig.load(worktree: worktree.url, branch: branch)
+    if !config.workItemURLs.contains(parsed.canonical) {
+      config.workItemURLs.append(parsed.canonical)
+      try? config.save(worktree: worktree.url, branch: branch)
+    }
+    urlText = ""
+    error = nil
+    showingPopover = false
+    NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
 }
 

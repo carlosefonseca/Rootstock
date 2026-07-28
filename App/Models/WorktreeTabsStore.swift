@@ -169,7 +169,7 @@ final class WorktreeTabsStore {
   private func makeTerminalTab(for worktree: WorktreeInfo, title: String) -> MainTab {
     let session = TerminalSession(id: UUID().uuidString, directory: worktree.url, title: title)
     session.start(initialCommand: initialCommands[worktree.path])
-    return MainTab(kind: .terminal, title: title, systemImage: "terminal", terminalSession: session)
+    return MainTab(kind: .terminal, title: title, systemImage: "terminal.fill", terminalSession: session)
   }
 
   private func makeWebTab(title: String, systemImage: String, urlString: String, worktree: WorktreeInfo) -> MainTab {

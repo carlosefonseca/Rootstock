@@ -38,6 +38,7 @@ struct ADOPullRequest: Decodable, Identifiable {
 
   var id: Int { pullRequestId }
   var targetBranch: String? { targetRefName?.replacingOccurrences(of: "refs/heads/", with: "") }
+  var sourceBranch: String? { sourceRefName?.replacingOccurrences(of: "refs/heads/", with: "") }
 }
 
 struct ADOReviewer: Decodable, Identifiable {

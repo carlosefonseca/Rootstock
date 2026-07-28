@@ -112,6 +112,7 @@ struct SharedConfigEditor: View {
 
 private struct WorkItemURLListEditor: View {
   @Binding var urls: [String]
+  @FocusState private var focusedIndex: Int?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -120,18 +121,23 @@ private struct WorkItemURLListEditor: View {
           TextField("Work item URL", text: $urls[index],
                      prompt: Text("https://dev.azure.com/org/project/_workitems/edit/12345"))
             .labelsHidden()
+            .focused($focusedIndex, equals: index)
           Button("Remove", systemImage: "minus.circle") { urls.remove(at: index) }
             .labelStyle(.iconOnly).foregroundStyle(.secondary)
         }
       }
-      Button("Add Work Item", systemImage: "plus.circle") { urls.append("") }
-        .labelStyle(.titleAndIcon)
+      Button("Add Work Item", systemImage: "plus.circle") {
+        urls.append("")
+        focusedIndex = urls.count - 1
+      }
+      .labelStyle(.titleAndIcon)
     }
   }
 }
 
 private struct PullRequestURLListEditor: View {
   @Binding var urls: [String]
+  @FocusState private var focusedIndex: Int?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -140,12 +146,16 @@ private struct PullRequestURLListEditor: View {
           TextField("Pull request URL", text: $urls[index],
                      prompt: Text("https://dev.azure.com/org/project/_git/repo/pullrequest/12345"))
             .labelsHidden()
+            .focused($focusedIndex, equals: index)
           Button("Remove", systemImage: "minus.circle") { urls.remove(at: index) }
             .labelStyle(.iconOnly).foregroundStyle(.secondary)
         }
       }
-      Button("Add Pull Request", systemImage: "plus.circle") { urls.append("") }
-        .labelStyle(.titleAndIcon)
+      Button("Add Pull Request", systemImage: "plus.circle") {
+        urls.append("")
+        focusedIndex = urls.count - 1
+      }
+      .labelStyle(.titleAndIcon)
     }
   }
 }

@@ -19,14 +19,35 @@ final class WorkspaceModel {
   /// re-fetched fresh from disk) the next time the app launches, instead of
   /// starting on an empty detail pane every time.
   var selectedPath: String? {
-    didSet { UserDefaults.standard.set(selectedPath, forKey: Self.selectedPathKey) }
+    didSet {
+      UserDefaults.standard.set(selectedPath, forKey: Self.selectedPathKey)
+      if let selectedPath { recordRecent(selectedPath) }
+    }
   }
   private static let selectedPathKey = "workspace.selectedPath"
+
+  /// Most-recently-selected worktree paths, newest first, pooled across every
+  /// clone rather than grouped by repo — lets the sidebar surface the 2-3
+  /// worktrees actually in use out of however many are tracked.
+  private(set) var recentPaths: [String] {
+    didSet { UserDefaults.standard.set(recentPaths, forKey: Self.recentPathsKey) }
+  }
+  private static let recentPathsKey = "workspace.recentPaths"
+  private static let maxRecents = 5
 
   @ObservationIgnored private var context: ModelContext?
 
   init() {
+    recentPaths = UserDefaults.standard.stringArray(forKey: Self.recentPathsKey) ?? []
     selectedPath = UserDefaults.standard.string(forKey: Self.selectedPathKey)
+  }
+
+  private func recordRecent(_ path: String) {
+    var paths = recentPaths
+    paths.removeAll { $0 == path }
+    paths.insert(path, at: 0)
+    if paths.count > Self.maxRecents { paths.removeLast(paths.count - Self.maxRecents) }
+    recentPaths = paths
   }
 
   func configure(_ context: ModelContext) {
@@ -62,10 +83,29 @@ final class WorkspaceModel {
     selectedPath = list[newIndex].path
   }
 
+  /// `recentPaths` resolved to their live `WorktreeInfo`, newest first. Paths
+  /// whose worktree was since removed (clone untracked, worktree deleted)
+  /// are silently dropped rather than shown as stale entries.
+  var recentWorktrees: [WorktreeInfo] {
+    recentPaths.compactMap { path in
+      for list in worktrees.values {
+        if let match = list.first(where: { $0.path == path }) { return match }
+      }
+      return nil
+    }
+  }
+
   func clone(forWorktree worktree: WorktreeInfo) -> TrackedClone? {
     clones.first { commonDir in
       worktrees[commonDir.commonDir]?.contains(where: { $0.path == worktree.path }) ?? false
     }
+  }
+
+  /// The worktree already checked out to `branch` within `clone`, if any —
+  /// lets a branch/PR picker offer to jump to an existing worktree instead of
+  /// creating a duplicate one.
+  func worktree(in clone: TrackedClone, branch: String) -> WorktreeInfo? {
+    worktrees[clone.commonDir]?.first { $0.branch == branch }
   }
 
   // MARK: Clones

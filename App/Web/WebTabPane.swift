@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Safari-style chrome — back/forward/reload plus an address bar — wrapping the
@@ -45,6 +46,10 @@ struct WebTabPane: View {
         .focused($addressFocused)
         .onSubmit { session.load(addressText) }
 
+      Button("Copy Page Link", systemImage: "link") { copyPageLink() }
+        .disabled(session.currentURLString == "about:blank")
+        .keyboardShortcut("c", modifiers: [.command, .shift])
+
       if session.isLoading {
         ProgressView().controlSize(.small)
       }
@@ -57,5 +62,11 @@ struct WebTabPane: View {
 
   private func displayString(_ url: String) -> String {
     url == "about:blank" ? "" : url
+  }
+
+  private func copyPageLink() {
+    guard session.currentURLString != "about:blank" else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(session.currentURLString, forType: .string)
   }
 }

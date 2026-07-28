@@ -63,6 +63,7 @@ private struct TopSection: View {
           Button("Edit Config", systemImage: "slider.horizontal.3") { showingEditor = true }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
+            .keyboardShortcut("e", modifiers: .command)
         }
       }
 

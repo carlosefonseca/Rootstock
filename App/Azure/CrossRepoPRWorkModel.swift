@@ -308,8 +308,10 @@ final class CrossRepoPRWorkModel {
     // Bucket: a comment I opened has a reply from someone else. Comment `id`
     // orders chronologically within a thread, so no date parsing is needed
     // (and AzureClient's plain JSONDecoder can't parse ADO's date format anyway).
+    // Only unresolved threads count — once a thread is fixed/closed there's
+    // nothing left to act on, so it shouldn't keep surfacing forever.
     var replyCount = 0
-    for thread in threads where thread.isDeleted != true {
+    for thread in threads where thread.isUnresolved {
       let comments = (thread.comments ?? []).filter { $0.commentType != "system" }.sorted { $0.id < $1.id }
       guard let mine = comments.first(where: { $0.author?.id == identity.id }) else { continue }
       if comments.contains(where: { $0.id > mine.id && $0.author?.id != identity.id }) {

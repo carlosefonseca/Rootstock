@@ -66,16 +66,59 @@ struct AzureService {
     return list?.filter { $0.isUnresolved && ($0.comments?.contains { $0.commentType != "system" } ?? false) }.count ?? 0
   }
 
-  /// Latest build for a branch under the code org/project.
-  func latestBuild(remote: AzureRemote, branch: String) async -> ADOBuild? {
+  /// Recent builds queued against `branchName`, most recently finished first.
+  private func builds(remote: AzureRemote, branchName: String, top: Int) async -> [ADOBuild] {
     let list = try? await client.get(ADOList<ADOBuild>.self, org: remote.org,
       path: "\(encode(remote.project))/_apis/build/builds",
       query: [
-        "branchName": "refs/heads/\(branch)",
-        "$top": "1",
+        "branchName": branchName,
+        "$top": String(top),
         "queryOrder": "finishTimeDescending",
       ])
-    return list?.value.first
+    return list?.value ?? []
+  }
+
+  enum BuildSource { case pullRequest, branch }
+
+  /// The latest build for each pipeline definition that has run against this
+  /// branch or PR. Plain branch-push builds (`refs/heads/<branch>`) only
+  /// reflect a CI trigger firing on push, which isn't necessarily the build
+  /// Azure Pipelines ran to validate the PR itself — PR builds (build-validation
+  /// policies, `pr:` triggers) run against the PR's merge ref
+  /// (`refs/pull/<id>/merge`) instead. This merges both so each pipeline shows
+  /// its single most relevant recent run, tagged with where it came from.
+  func latestBuildsByPipeline(remote: AzureRemote, branch: String, prId: Int?) async -> [(build: ADOBuild, source: BuildSource)] {
+    async let branchBuilds = builds(remote: remote, branchName: "refs/heads/\(branch)", top: 50)
+    let prBuilds: [ADOBuild]
+    if let prId {
+      prBuilds = await builds(remote: remote, branchName: "refs/pull/\(prId)/merge", top: 50)
+    } else {
+      prBuilds = []
+    }
+
+    // Each list is already ordered most-recently-finished first, so the first
+    // occurrence of a definition id within a list is that source's latest.
+    func firstPerDefinition(_ list: [ADOBuild]) -> [Int: ADOBuild] {
+      var result: [Int: ADOBuild] = [:]
+      for build in list {
+        guard let id = build.definition?.id, result[id] == nil else { continue }
+        result[id] = build
+      }
+      return result
+    }
+
+    let latestBranch = firstPerDefinition(await branchBuilds)
+    let latestPR = firstPerDefinition(prBuilds)
+
+    var merged: [Int: (build: ADOBuild, source: BuildSource)] = [:]
+    for (id, build) in latestBranch { merged[id] = (build, .branch) }
+    for (id, build) in latestPR {
+      if let existing = merged[id], (existing.build.finishTimeDate ?? .distantPast) > (build.finishTimeDate ?? .distantPast) {
+        continue
+      }
+      merged[id] = (build, .pullRequest)
+    }
+    return Array(merged.values)
   }
 
   /// Work item detail from the (possibly different) work-item org. Scoped to

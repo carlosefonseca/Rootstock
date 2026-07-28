@@ -8,10 +8,12 @@ struct ContentView: View {
   @Environment(\.openWindow) private var openWindow
   @State private var showingNewWorktree = false
   @State private var editingTerminalCommandFor: TrackedClone?
+  @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+  @State private var showingSidebarPopover = false
 
   var body: some View {
     @Bindable var workspace = workspace
-    NavigationSplitView {
+    NavigationSplitView(columnVisibility: $columnVisibility) {
       SidebarView(editingTerminalCommandFor: $editingTerminalCommandFor)
         .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 380)
     } detail: {
@@ -26,12 +28,30 @@ struct ContentView: View {
     // column — a toolbar on SidebarView itself disappears along with it when
     // the sidebar is collapsed.
     .toolbar {
-      ToolbarItem {
+      // .navigation places these next to the system-provided sidebar toggle
+      // on the left, rather than the trailing side macOS defaults to.
+      ToolbarItem(placement: .navigation) {
         Menu {
           Button("Track Existing Clone…", systemImage: "folder.badge.plus") { trackClone() }
           Button("New Worktree from Work Item…", systemImage: "plus.rectangle.on.folder") { showingNewWorktree = true }
         } label: {
           Label("Add", systemImage: "plus")
+        }
+      }
+      if columnVisibility == .detailOnly {
+        ToolbarItem(placement: .navigation) {
+          Button {
+            showingSidebarPopover = true
+          } label: {
+            Label("Worktrees", systemImage: "list.bullet.rectangle.portrait")
+          }
+          .popover(isPresented: $showingSidebarPopover, arrowEdge: .bottom) {
+            SidebarView(editingTerminalCommandFor: $editingTerminalCommandFor)
+              .frame(width: 280, height: 420)
+              .onChange(of: workspace.selectedPath) {
+                showingSidebarPopover = false
+              }
+          }
         }
       }
       ToolbarItem {

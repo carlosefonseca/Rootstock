@@ -69,7 +69,7 @@ struct AzureSection: View {
   }
 
   @ViewBuilder private var loadedContent: some View {
-    PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipeline: model.pipeline, remote: model.remote,
+    PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipelines: model.pipelines, remote: model.remote,
                     branch: worktree.branch, worktree: worktree, tabsStore: tabsStore)
     if !model.additionalPRs.isEmpty {
       Divider()
@@ -102,7 +102,7 @@ struct AzureSection: View {
 private struct PullRequestCard: View {
   var pr: ADOPullRequest?
   var unresolved: Int
-  var pipeline: WorktreeAzureModel.Pipeline
+  var pipelines: [WorktreeAzureModel.Pipeline]
   var remote: AzureRemote?
   var branch: String?
   var worktree: WorktreeInfo
@@ -110,11 +110,7 @@ private struct PullRequestCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Label("Pull Request", systemImage: "arrow.triangle.pull").font(.subheadline.weight(.medium))
-        Spacer()
-        PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore)
-      }
+      Label("Pull Request", systemImage: "arrow.triangle.pull").font(.subheadline.weight(.medium))
 
       if let pr {
         HStack(spacing: 6) {
@@ -123,6 +119,10 @@ private struct PullRequestCard: View {
           if pr.mergeStatus == "conflicts" {
             StatusPill(text: "Conflicts", tint: .red)
           }
+          // String(_:), not raw Int interpolation — Text(_:) parses an
+          // interpolated Int through LocalizedStringKey's number formatting,
+          // which inserts a locale thousands separator for values >= 1000.
+          Text("#\(String(pr.pullRequestId))").font(.caption.monospaced()).foregroundStyle(.secondary)
           Spacer()
           Button("Open", systemImage: "arrow.up.right.square") {
             if let remote {
@@ -133,6 +133,14 @@ private struct PullRequestCard: View {
           .controlSize(.small).labelStyle(.iconOnly)
         }
         Text(pr.title).font(.callout).lineLimit(2)
+
+        if !pipelines.isEmpty {
+          VStack(alignment: .leading, spacing: 4) {
+            ForEach(pipelines) { pipeline in
+              PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore)
+            }
+          }
+        }
 
         if let reviewers = pr.reviewers, !reviewers.isEmpty {
           ReviewerRow(reviewers: reviewers, org: remote?.org ?? "")
@@ -152,6 +160,14 @@ private struct PullRequestCard: View {
                                  systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
             }
             .controlSize(.small)
+          }
+        }
+
+        if !pipelines.isEmpty {
+          VStack(alignment: .leading, spacing: 4) {
+            ForEach(pipelines) { pipeline in
+              PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore)
+            }
           }
         }
       }
@@ -245,35 +261,60 @@ private struct ReviewerChip: View {
   }
 }
 
+/// One row per pipeline definition (e.g. "ios-build", "ios-test"), tagged with
+/// whether its latest run was the PR's own validation build or just a plain
+/// branch-push build — the two aren't always the same build, which is what
+/// made the old single branch-only badge misleading.
 private struct PipelinePill: View {
   var pipeline: WorktreeAzureModel.Pipeline
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
 
   var body: some View {
-    if pipeline.state != .none {
-      Button {
-        if let url = pipeline.url {
-          WebLinkOpener.open(url, title: "Pipeline", systemImage: "checkmark.seal",
-                             worktree: worktree, tabsStore: tabsStore)
-        }
-      } label: {
-        Label(text, systemImage: icon).font(.caption.weight(.medium))
+    Button {
+      if let url = pipeline.url {
+        WebLinkOpener.open(url, title: pipeline.name, systemImage: "checkmark.seal",
+                           worktree: worktree, tabsStore: tabsStore)
       }
-      .buttonStyle(.plain)
-      .foregroundStyle(tint)
-      .help(pipeline.url != nil
-            ? "\(pipeline.label ?? "Latest pipeline") — \(text). Click to open."
-            : "\(pipeline.label ?? "Latest pipeline") — \(text)")
+    } label: {
+      HStack(spacing: 6) {
+        Text(sourceLabel)
+          .font(.caption2.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 5).padding(.vertical, 1)
+          .background(.secondary.opacity(0.15), in: .capsule)
+        Text(pipeline.name).font(.caption).foregroundStyle(.primary)
+        if let label = pipeline.label {
+          Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+        Label(text, systemImage: icon).font(.caption.weight(.medium)).foregroundStyle(tint)
+        Spacer(minLength: 0)
+      }
     }
+    .buttonStyle(.plain)
+    .help(pipeline.url != nil
+          ? "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text). Click to open."
+          : "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text)")
   }
 
+  private var sourceLabel: String {
+    switch pipeline.source {
+    case .pullRequest: return "PR"
+    case .branch: return "Branch"
+    }
+  }
+  private var sourceHelp: String {
+    switch pipeline.source {
+    case .pullRequest: return "PR validation build"
+    case .branch: return "Branch build"
+    }
+  }
   private var text: String {
     switch pipeline.state {
     case .succeeded: return "Passed"
     case .failed: return "Failed"
     case .running: return "Running"
-    case .none: return ""
+    case .none: return "—"
     }
   }
   private var icon: String {

@@ -90,13 +90,30 @@ struct ADOBuild: Decodable, Identifiable {
   var buildNumber: String?
   var status: String?           // notStarted / inProgress / completed
   var result: String?           // succeeded / partiallySucceeded / failed / canceled
+  var finishTime: String?
+  var definition: Definition?
   var _links: Links?
+
+  struct Definition: Decodable { var id: Int; var name: String? }
 
   struct Links: Decodable {
     var web: Href?
     struct Href: Decodable { var href: String? }
   }
   var webURL: String? { _links?.web?.href }
+
+  private static let dateFormatterWithFraction: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
+  private static let dateFormatter = ISO8601DateFormatter()
+  /// Used to pick the more recent of two builds for the same pipeline
+  /// definition when merging branch-push and PR-validation build lists.
+  /// ADO's `finishTime` usually has fractional seconds, but isn't guaranteed to.
+  var finishTimeDate: Date? {
+    finishTime.flatMap { Self.dateFormatterWithFraction.date(from: $0) ?? Self.dateFormatter.date(from: $0) }
+  }
 }
 
 /// A build/policy check attached to a specific pull request (distinct from

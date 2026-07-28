@@ -14,8 +14,17 @@ final class WorktreeAzureModel {
     case failed(String)
   }
 
-  struct Pipeline: Equatable {
+  /// The latest build for one pipeline definition (e.g. "ios-build",
+  /// "ios-test") that ran against this branch or PR.
+  struct Pipeline: Equatable, Identifiable {
     enum State { case succeeded, failed, running, none }
+    /// Whether this pipeline's latest run was the PR's actual validation
+    /// build (`refs/pull/<id>/merge`) or just a plain branch-push build
+    /// (`refs/heads/<branch>`) — the two aren't always the same build.
+    enum Source { case pullRequest, branch }
+    var id: Int
+    var name: String
+    var source: Source
     var state: State
     var url: String?
     var label: String? = nil
@@ -43,7 +52,7 @@ final class WorktreeAzureModel {
   private(set) var phase: Phase = .idle
   private(set) var pr: ADOPullRequest?
   private(set) var unresolved = 0
-  private(set) var pipeline = Pipeline(state: .none, url: nil)
+  private(set) var pipelines: [Pipeline] = []
   private(set) var workItems: [WorkItemEntry] = []
   private(set) var additionalPRs: [AdditionalPREntry] = []
   /// A work-item link found in the PR description that isn't in the configured
@@ -79,23 +88,23 @@ final class WorktreeAzureModel {
         self.pr = pull
         if let pull {
           async let unresolved = service.unresolvedCommentCount(remote: remote, prId: pull.pullRequestId)
-          async let build = service.latestBuild(remote: remote, branch: branch)
+          async let builds = service.latestBuildsByPipeline(remote: remote, branch: branch, prId: pull.pullRequestId)
           self.unresolved = await unresolved
-          self.pipeline = pipeline(from: await build)
+          self.pipelines = pipelines(from: await builds)
         } else {
           self.unresolved = 0
-          self.pipeline = pipeline(from: await service.latestBuild(remote: remote, branch: branch))
+          self.pipelines = pipelines(from: await service.latestBuildsByPipeline(remote: remote, branch: branch, prId: nil))
         }
       } catch {
         prFailure = error
         self.pr = nil
         self.unresolved = 0
-        self.pipeline = Pipeline(state: .none, url: nil)
+        self.pipelines = []
       }
     } else {
       self.pr = nil
       self.unresolved = 0
-      self.pipeline = Pipeline(state: .none, url: nil)
+      self.pipelines = []
     }
 
     await resolveWorkItems(worktree: worktree, branch: branch, prDescription: pr?.description)
@@ -165,16 +174,27 @@ final class WorktreeAzureModel {
     additionalPRs.sort { configured.firstIndex(of: $0.url) ?? 0 < configured.firstIndex(of: $1.url) ?? 0 }
   }
 
-  /// The latest pipeline build for the branch — always carries a working link
-  /// when a build exists, unlike PR-level statuses which aren't guaranteed one.
-  private func pipeline(from build: ADOBuild?) -> Pipeline {
-    guard let build else { return Pipeline(state: .none, url: nil, label: nil) }
-    let label = "Build #\(build.buildNumber ?? String(build.id))"
-    if build.status != "completed" { return Pipeline(state: .running, url: build.webURL, label: label) }
-    switch build.result {
-    case "succeeded", "partiallySucceeded": return Pipeline(state: .succeeded, url: build.webURL, label: label)
-    case "failed", "canceled": return Pipeline(state: .failed, url: build.webURL, label: label)
-    default: return Pipeline(state: .none, url: build.webURL, label: label)
-    }
+  /// Converts each pipeline definition's latest build into a `Pipeline`,
+  /// sorted by name so the list stays stable across reloads rather than
+  /// jumping around by recency.
+  private func pipelines(from builds: [(build: ADOBuild, source: AzureService.BuildSource)]) -> [Pipeline] {
+    builds.compactMap { entry -> Pipeline? in
+      guard let definitionId = entry.build.definition?.id else { return nil }
+      let build = entry.build
+      let label = "#\(build.buildNumber ?? String(build.id))"
+      let source: Pipeline.Source = entry.source == .pullRequest ? .pullRequest : .branch
+      let state: Pipeline.State
+      if build.status != "completed" {
+        state = .running
+      } else {
+        switch build.result {
+        case "succeeded", "partiallySucceeded": state = .succeeded
+        case "failed", "canceled": state = .failed
+        default: state = .none
+        }
+      }
+      return Pipeline(id: definitionId, name: build.definition?.name ?? "Pipeline", source: source,
+                       state: state, url: build.webURL, label: label)
+    }.sorted { $0.name < $1.name }
   }
 }

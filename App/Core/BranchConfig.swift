@@ -60,7 +60,12 @@ struct BranchConfig {
       let line = String(rawLine)
       let trimmed = line.trimmingCharacters(in: .whitespaces)
       guard let eq = trimmed.firstIndex(of: "="), !trimmed.hasPrefix("#") else {
-        if !line.isEmpty { config.passthrough.append(line) }
+        // Drop the "# branch-sync config for: <branch>" header — `save()`
+        // always regenerates it, so keeping it in passthrough would
+        // duplicate it on every subsequent save.
+        if !line.isEmpty, !trimmed.hasPrefix("# branch-sync config for:") {
+          config.passthrough.append(line)
+        }
         continue
       }
       let key = String(trimmed[..<eq])
@@ -143,7 +148,11 @@ struct DcdpConfig {
       let line = String(rawLine)
       let trimmed = line.trimmingCharacters(in: .whitespaces)
       guard let eq = trimmed.firstIndex(of: "="), !trimmed.hasPrefix("#") else {
-        if !line.isEmpty { config.passthrough.append(line) }
+        // Drop the header comment — `save()` always regenerates it, so
+        // keeping it in passthrough would duplicate it on every save.
+        if !line.isEmpty, !trimmed.hasPrefix("# Rootstock repo config") {
+          config.passthrough.append(line)
+        }
         continue
       }
       let key = String(trimmed[..<eq]).trimmingCharacters(in: .whitespaces)

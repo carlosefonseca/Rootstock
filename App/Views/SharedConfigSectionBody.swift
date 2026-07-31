@@ -14,6 +14,8 @@ struct SharedConfigEditor: View {
   @State private var figmaURL = ""
   @State private var slackURL = ""
   @State private var loaded = BranchConfig()
+  @State private var localBranches: [String] = []
+  @State private var remoteBranches: [String] = []
 
   @State private var saveError: String?
 
@@ -34,7 +36,9 @@ struct SharedConfigEditor: View {
 
       Form {
         Section("Branch — \(branch)") {
-          Field(title: "Base branch (PRJ_DEP)", text: $baseBranch, prompt: "develop")
+          BranchPickerField(title: "Base branch (PRJ_DEP)", selection: $baseBranch,
+                            localBranches: localBranches, remoteBranches: remoteBranches,
+                            prompt: "develop")
         }
         Section {
           WorkItemURLListEditor(urls: $workItemURLs)
@@ -81,6 +85,7 @@ struct SharedConfigEditor: View {
     }
     .frame(width: 640, height: 680)
     .task { load() }
+    .task { await loadBranches() }
   }
 
   private func load() {
@@ -90,6 +95,15 @@ struct SharedConfigEditor: View {
     additionalPRURLs = loaded.additionalPRURLs
     figmaURL = loaded.figmaURL ?? ""
     slackURL = loaded.slackChannelURL ?? ""
+  }
+
+  private func loadBranches() async {
+    let result = await Git.branches(in: worktree.url)
+    localBranches = result.local
+    // Hide remotes that already have a local branch of the same name, matching
+    // how `NewWorktreeView` presents the same list.
+    let localSet = Set(result.local)
+    remoteBranches = result.remote.filter { !localSet.contains(String($0.dropFirst("origin/".count))) }
   }
 
   private func save() {
@@ -156,20 +170,6 @@ private struct PullRequestURLListEditor: View {
         focusedIndex = urls.count - 1
       }
       .labelStyle(.titleAndIcon)
-    }
-  }
-}
-
-private struct Field: View {
-  var title: String
-  @Binding var text: String
-  var prompt: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      Text(title).font(.caption).foregroundStyle(.secondary)
-      TextField(title, text: $text, prompt: Text(prompt))
-        .labelsHidden()
     }
   }
 }

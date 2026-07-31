@@ -153,6 +153,17 @@ final class WorktreeTabsStore {
     persist()
   }
 
+  /// Tears down every tab for a worktree that's about to be deleted — unlike
+  /// `close(_:for:)`, doesn't leave a replacement terminal tab behind, since
+  /// there's no worktree left for it to run in.
+  func closeAll(for worktree: WorktreeInfo) {
+    for tab in tabsByWorktree[worktree.path] ?? [] { tab.close() }
+    tabsByWorktree[worktree.path] = nil
+    selection[worktree.path] = nil
+    initialCommands[worktree.path] = nil
+    persist()
+  }
+
   /// Reorders `id` to sit immediately before `targetID` within the worktree's
   /// tab list — called repeatedly as a dragged tab hovers over its neighbors,
   /// so the bar reorders live rather than only on drop.

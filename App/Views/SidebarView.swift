@@ -3,7 +3,13 @@ import AppKit
 
 struct SidebarView: View {
   @Environment(WorkspaceModel.self) private var workspace
+  @Environment(WorktreeTabsStore.self) private var tabsStore
+  @Environment(WorktreeLinksStore.self) private var linksStore
   @Binding var editingTerminalCommandFor: TrackedClone?
+
+  @State private var worktreeToDelete: WorktreeInfo?
+  @State private var deleteErrorWorktree: WorktreeInfo?
+  @State private var deleteErrorMessage: String?
 
   var body: some View {
     @Bindable var workspace = workspace
@@ -14,6 +20,7 @@ struct SidebarView: View {
             WorktreeRow(worktree: worktree, status: workspace.statuses[worktree.path],
                         cloneName: workspace.clone(forWorktree: worktree)?.displayName)
               .tag(worktree.path)
+              .contextMenu { worktreeContextMenu(worktree) }
           }
         }
       }
@@ -28,6 +35,7 @@ struct SidebarView: View {
             ForEach(rows) { worktree in
               WorktreeRow(worktree: worktree, status: workspace.statuses[worktree.path])
                 .tag(worktree.path)
+                .contextMenu { worktreeContextMenu(worktree) }
             }
           }
         } header: {
@@ -52,6 +60,59 @@ struct SidebarView: View {
         } actions: {
           Button("Track Clone…") { trackClone() }
         }
+      }
+    }
+    .confirmationDialog("Delete Worktree?",
+                         isPresented: Binding(get: { worktreeToDelete != nil }, set: { if !$0 { worktreeToDelete = nil } }),
+                         presenting: worktreeToDelete) { worktree in
+      Button("Delete", role: .destructive) { delete(worktree, force: false) }
+      Button("Cancel", role: .cancel) {}
+    } message: { worktree in
+      Text("This deletes \(worktree.folderName) — the branch and its history are untouched, but any uncommitted changes in the working directory will be lost. This can't be undone.")
+    }
+    .alert("Couldn't Delete Worktree",
+           isPresented: Binding(get: { deleteErrorWorktree != nil }, set: { if !$0 { deleteErrorWorktree = nil } })) {
+      if let deleteErrorWorktree {
+        Button("Force Delete", role: .destructive) { delete(deleteErrorWorktree, force: true) }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(deleteErrorMessage ?? "")
+    }
+  }
+
+  @ViewBuilder
+  private func worktreeContextMenu(_ worktree: WorktreeInfo) -> some View {
+    Button("Reveal in Finder", systemImage: "folder") { AppOpener.revealInFinder(worktree.url) }
+    Button("Open in VS Code", systemImage: "chevron.left.forwardslash.chevron.right") { AppOpener.openInVSCode(worktree.url) }
+    Button("Open in Fork", systemImage: "arrow.triangle.branch") { AppOpener.openInFork(worktree.url) }
+    Divider()
+    Button("Copy Path", systemImage: "doc.on.doc") { copyToPasteboard(worktree.path) }
+    if let branch = worktree.branch {
+      Button("Copy Branch Name", systemImage: "doc.on.doc") { copyToPasteboard(branch) }
+    }
+    Divider()
+    Button("Refresh Status", systemImage: "arrow.clockwise") {
+      Task { await workspace.reloadStatus(for: worktree) }
+    }
+    if !workspace.isMainWorktree(worktree) {
+      Divider()
+      Button("Delete Worktree…", systemImage: "trash", role: .destructive) {
+        worktreeToDelete = worktree
+      }
+    }
+  }
+
+  private func copyToPasteboard(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+  }
+
+  private func delete(_ worktree: WorktreeInfo, force: Bool) {
+    Task {
+      if let error = await workspace.deleteWorktree(worktree, tabsStore: tabsStore, linksStore: linksStore, force: force) {
+        deleteErrorWorktree = worktree
+        deleteErrorMessage = error
       }
     }
   }

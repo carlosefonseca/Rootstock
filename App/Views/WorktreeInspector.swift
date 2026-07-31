@@ -37,11 +37,26 @@ struct WorktreeInspector: View {
 /// tab menu now, alongside the other quick-open destinations; this stays a
 /// compact "open this worktree elsewhere" row.
 private struct TopSection: View {
+  @Environment(WorkspaceModel.self) private var workspace
+  @Environment(WorktreeTabsStore.self) private var tabsStore
+  @Environment(WorktreeLinksStore.self) private var linksStore
   var worktree: WorktreeInfo
 
   @State private var showingEditor = false
+  @State private var confirmingDelete = false
+  @State private var showingDeleteError = false
+  @State private var deleteErrorMessage: String?
+  /// Bumped on `.branchConfigChanged` so quick links pick up config edits
+  /// without reopening the worktree — the config lives on disk, so there's
+  /// nothing observable to depend on otherwise.
+  @State private var linksReloadToken = 0
   private let forkURL = AppOpener.forkAppURL()
   private let vscodeURL = AppOpener.vscodeAppURL()
+
+  private var quickLinks: [QuickLink] {
+    _ = linksReloadToken
+    return QuickLinks.resolve(for: worktree, linksStore: linksStore)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -65,6 +80,17 @@ private struct TopSection: View {
             .buttonStyle(.borderless)
             .keyboardShortcut("e", modifiers: .command)
         }
+        if !workspace.isMainWorktree(worktree) {
+          Button("Delete Worktree", systemImage: "trash", role: .destructive) { confirmingDelete = true }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red)
+        }
+      }
+
+      let links = quickLinks
+      if !links.isEmpty {
+        QuickLinksRow(worktree: worktree, links: links)
       }
 
       HStack(spacing: 8) {
@@ -97,9 +123,33 @@ private struct TopSection: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(.background.secondary, in: .rect(cornerRadius: 12))
     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+    .onReceive(NotificationCenter.default.publisher(for: .branchConfigChanged)) { _ in
+      linksReloadToken += 1
+    }
     .sheet(isPresented: $showingEditor) {
       if let branch = worktree.branch {
         SharedConfigEditor(worktree: worktree, branch: branch)
+      }
+    }
+    .confirmationDialog("Delete Worktree?", isPresented: $confirmingDelete) {
+      Button("Delete", role: .destructive) { delete(force: false) }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This deletes \(worktree.folderName) — the branch and its history are untouched, but any uncommitted changes in the working directory will be lost. This can't be undone.")
+    }
+    .alert("Couldn't Delete Worktree", isPresented: $showingDeleteError) {
+      Button("Force Delete", role: .destructive) { delete(force: true) }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(deleteErrorMessage ?? "")
+    }
+  }
+
+  private func delete(force: Bool) {
+    Task {
+      if let error = await workspace.deleteWorktree(worktree, tabsStore: tabsStore, linksStore: linksStore, force: force) {
+        deleteErrorMessage = error
+        showingDeleteError = true
       }
     }
   }

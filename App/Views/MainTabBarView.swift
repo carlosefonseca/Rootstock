@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -24,22 +25,24 @@ struct MainTabBarView: View {
     workspace.clone(forWorktree: worktree)?.terminalInitCommand
   }
 
-  /// The branch's shared config — read fresh each time the menu opens, since
-  /// it can change (via the config editor) without the tab bar reloading.
-  private var branchConfig: BranchConfig? {
-    guard let branch = worktree.branch else { return nil }
-    return BranchConfig.load(worktree: worktree.url, branch: branch)
+  /// Read fresh each time the menu opens, since the shared config can change
+  /// (via the config editor) without the tab bar reloading.
+  private var quickLinks: [QuickLink] {
+    QuickLinks.resolve(for: worktree, linksStore: linksStore)
   }
 
-  /// Work items are self-describing URLs, so listing them for the quick-link
-  /// menu needs no org/project resolution — just parsing what's configured.
-  private var workItemURLs: [WorkItemURL] {
-    (branchConfig?.workItemURLs ?? []).compactMap { WorkItemURL.parse($0) }
-  }
-
-  private var hasAnyQuickLink: Bool {
-    linksStore.pullRequestURL(for: worktree) != nil || !workItemURLs.isEmpty ||
-    !(branchConfig?.figmaURL ?? "").isEmpty || !(branchConfig?.slackChannelURL ?? "").isEmpty
+  /// A URL sitting on the clipboard, for the "+" menu's Paste and Go.
+  ///
+  /// Only ever called from the button's *action*, never to decide whether to
+  /// show it: SwiftUI builds menu content from the last body evaluation, and
+  /// the pasteboard isn't observable, so gating visibility on this showed a
+  /// stale item — and worse, could hide it when a URL really had been copied.
+  private var pasteboardURL: String? {
+    guard let raw = NSPasteboard.general.string(forType: .string)?
+      .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
+      raw.contains("://") || raw.hasPrefix("www."),
+      WebTabSession.normalizedURL(raw) != nil else { return nil }
+    return raw
   }
 
   var body: some View {
@@ -71,6 +74,12 @@ struct MainTabBarView: View {
           tabsStore.select(tab.id, for: worktree)
         })
         .keyboardShortcut("t", modifiers: [.command, .shift])
+        // Without this, Cmd+W falls through to the window's default "Close"
+        // command and closes the whole window instead of just the tab.
+        Button("", action: {
+          if let selectedID { tabsStore.close(selectedID, for: worktree) }
+        })
+        .keyboardShortcut("w", modifiers: .command)
       }
       .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
       // Cmd+1...Cmd+9 jump straight to a tab by position — e.g. the work item
@@ -101,6 +110,37 @@ struct MainTabBarView: View {
   private func selectTab(at index: Int) {
     guard tabs.indices.contains(index) else { return }
     tabsStore.select(tabs[index].id, for: worktree)
+  }
+
+  /// Right-click menu on a tab chip. Web tabs get the link actions; the
+  /// close actions apply to any tab.
+  @ViewBuilder private func tabContextMenu(_ tab: MainTab) -> some View {
+    if let urlString = tab.webSession?.currentURLString, urlString != "about:blank" {
+      Button("Open in Browser", systemImage: "safari") { AppOpener.open(urlString) }
+      Button("Copy Link", systemImage: "link") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(urlString, forType: .string)
+      }
+      Button("Duplicate Tab", systemImage: "plus.square.on.square") {
+        let new = tabsStore.addWebTab(for: worktree, urlString: urlString,
+                                      title: tab.title, systemImage: tab.systemImage)
+        tabsStore.select(new.id, for: worktree)
+      }
+      // Zoom is stored per hostname, so this resets every tab on this host.
+      if let session = tab.webSession, abs(session.pageZoom - 1.0) > 0.001 {
+        Button("Reset Zoom (\(Int((session.pageZoom * 100).rounded()))%)", systemImage: "arrow.counterclockwise") {
+          session.zoomReset()
+        }
+      }
+      Divider()
+    }
+    Button("Close Tab", systemImage: "xmark") { tabsStore.close(tab.id, for: worktree) }
+    Button("Close Other Tabs", systemImage: "xmark.square") {
+      for other in tabs where other.id != tab.id {
+        tabsStore.close(other.id, for: worktree)
+      }
+    }
+    .disabled(tabs.count < 2)
   }
 
   private func zoomIn() {
@@ -135,6 +175,7 @@ struct MainTabBarView: View {
             TabChip(tab: tab, isSelected: tab.id == selectedID,
                     select: { tabsStore.select(tab.id, for: worktree) },
                     close: { tabsStore.close(tab.id, for: worktree) })
+              .contextMenu { tabContextMenu(tab) }
               .onDrag {
                 draggedTabID = tab.id
                 return NSItemProvider(object: tab.id.uuidString as NSString)
@@ -154,30 +195,18 @@ struct MainTabBarView: View {
           let tab = tabsStore.addWebTab(for: worktree)
           tabsStore.select(tab.id, for: worktree)
         }
+        Button("Paste and Go", systemImage: "doc.on.clipboard") {
+          guard let pasted = pasteboardURL else { return }
+          let tab = tabsStore.addWebTab(for: worktree, urlString: pasted)
+          tabsStore.select(tab.id, for: worktree)
+        }
 
-        if hasAnyQuickLink {
+        let links = quickLinks
+        if !links.isEmpty {
           Divider()
-          if let prURL = linksStore.pullRequestURL(for: worktree) {
-            Button("Pull Request", systemImage: "arrow.triangle.pull") {
-              WebLinkOpener.open(prURL, title: "Pull Request", systemImage: "arrow.triangle.pull",
-                                 worktree: worktree, tabsStore: tabsStore)
-            }
-          }
-          ForEach(workItemURLs, id: \.self) { wiURL in
-            Button("Work Item #\(wiURL.id)", systemImage: "checklist") {
-              WebLinkOpener.open(wiURL.canonical, title: "Work Item #\(wiURL.id)", systemImage: "checklist",
-                                 worktree: worktree, tabsStore: tabsStore)
-            }
-          }
-          if let figma = branchConfig?.figmaURL, !figma.isEmpty {
-            Button("Figma", systemImage: "paintbrush.pointed") {
-              WebLinkOpener.open(figma, title: "Figma", systemImage: "paintbrush.pointed",
-                                 worktree: worktree, tabsStore: tabsStore)
-            }
-          }
-          if let slack = branchConfig?.slackChannelURL, !slack.isEmpty {
-            Button("Slack", systemImage: "bubble.left.and.bubble.right") {
-              AppOpener.openSlack(slack)
+          ForEach(links) { link in
+            Button(link.title, systemImage: link.systemImage) {
+              QuickLinks.open(link, worktree: worktree, tabsStore: tabsStore)
             }
           }
         }

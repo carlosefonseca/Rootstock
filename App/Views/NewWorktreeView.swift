@@ -32,6 +32,8 @@ struct NewWorktreeView: View {
   @State private var type: WorkItemType = .feature
   @State private var branchEdited = false
   @State private var branch = ""
+  @State private var folderNameEdited = false
+  @State private var folderName = ""
   @State private var baseBranch = "develop"
   @State private var figmaURL = ""
   @State private var slackURL = ""
@@ -44,7 +46,6 @@ struct NewWorktreeView: View {
 
   // Existing-branch state.
   @State private var existingBranch = ""
-  @State private var branchSearchText = ""
   @State private var localBranches: [String] = []
   @State private var remoteBranches: [String] = []
 
@@ -102,6 +103,12 @@ struct NewWorktreeView: View {
     }))
   }
 
+  /// A folder name is a single path component, so `/` (which would create a
+  /// nested directory) gets collapsed just like it is in the derived default.
+  private func sanitizeFolderInput(_ text: String) -> String {
+    sanitizeBranchInput(text).replacingOccurrences(of: "/", with: "-")
+  }
+
   private var effectiveBranch: String {
     switch source {
     case .newBranch: return branchEdited ? branch : derivedBranch
@@ -109,11 +116,18 @@ struct NewWorktreeView: View {
     }
   }
 
+  private var derivedFolderName: String {
+    effectiveBranch.replacingOccurrences(of: "/", with: "-")
+  }
+
+  private var effectiveFolderName: String {
+    source == .newBranch && folderNameEdited ? folderName : derivedFolderName
+  }
+
   private var targetPath: URL? {
     guard let parent = parentDir ?? selectedClone?.rootURL.deletingLastPathComponent(),
-          !effectiveBranch.isEmpty else { return nil }
-    let folder = effectiveBranch.replacingOccurrences(of: "/", with: "-")
-    return parent.appending(path: folder)
+          !effectiveFolderName.isEmpty else { return nil }
+    return parent.appending(path: effectiveFolderName)
   }
 
   var body: some View {
@@ -164,7 +178,8 @@ struct NewWorktreeView: View {
         }
 
         Section("Shared config") {
-          TextField("Base branch (PRJ_DEP)", text: $baseBranch, prompt: Text("develop"))
+          BranchPickerField(title: "Base branch (PRJ_DEP)", selection: $baseBranch,
+                            localBranches: localBranches, remoteBranches: remoteBranches)
           TextField("Figma URL", text: $figmaURL, prompt: Text("optional"))
           TextField("Slack channel URL", text: $slackURL, prompt: Text("optional"))
         }
@@ -190,7 +205,8 @@ struct NewWorktreeView: View {
     .onChange(of: selectedCloneID) { reloadBranches(); loadPullRequests() }
     .onChange(of: source) { reloadBranches(); loadPullRequests() }
     .onChange(of: selectedPRId) {
-      if let sourceBranch = selectedPR?.sourceBranch { existingBranch = "origin/\(sourceBranch)" }
+      guard let sourceBranch = selectedPR?.sourceBranch else { return }
+      existingBranch = localBranches.contains(sourceBranch) ? sourceBranch : "origin/\(sourceBranch)"
     }
   }
 
@@ -200,53 +216,23 @@ struct NewWorktreeView: View {
         get: { effectiveBranch },
         set: { branch = sanitizeBranchInput($0); branchEdited = true }))
         .font(.body.monospaced())
-      TextField("Base branch", text: $baseBranch, prompt: Text("develop"))
+      BranchPickerField(title: "Base branch", selection: $baseBranch,
+                        localBranches: localBranches, remoteBranches: remoteBranches)
+      TextField("Folder name", text: Binding(
+        get: { effectiveFolderName },
+        set: { folderName = sanitizeFolderInput($0); folderNameEdited = true }))
+        .font(.body.monospaced())
       locationRow
     }
   }
 
-  private var filteredLocalBranches: [String] {
-    branchSearchText.isEmpty ? localBranches : localBranches.filter { $0.localizedCaseInsensitiveContains(branchSearchText) }
-  }
-
-  private var filteredRemoteBranches: [String] {
-    branchSearchText.isEmpty ? remoteBranches : remoteBranches.filter { $0.localizedCaseInsensitiveContains(branchSearchText) }
-  }
-
   @ViewBuilder private var existingBranchSection: some View {
     Section("Branch") {
-      HStack {
-        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-        TextField("Search branches", text: $branchSearchText)
-          .textFieldStyle(.plain)
-        if !branchSearchText.isEmpty {
-          Button {
-            branchSearchText = ""
-          } label: {
-            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-          }
-          .buttonStyle(.plain)
-        }
-      }
-      List(selection: Binding(
-        get: { existingBranch.isEmpty ? nil : existingBranch },
-        set: { existingBranch = $0 ?? "" }
-      )) {
-        if !filteredLocalBranches.isEmpty {
-          Section("Local") {
-            ForEach(filteredLocalBranches, id: \.self) { Text($0).tag($0) }
-          }
-        }
-        if !filteredRemoteBranches.isEmpty {
-          Section("Remote") {
-            ForEach(filteredRemoteBranches, id: \.self) { Text($0).tag($0) }
-          }
-        }
-        if filteredLocalBranches.isEmpty && filteredRemoteBranches.isEmpty {
-          Text("No matching branches").foregroundStyle(.secondary)
-        }
-      }
-      .frame(height: 160)
+      // `stripsRemotePrefix: false` — `origin/` here means "create a local
+      // branch tracking that remote", which `gitCommand` keys off.
+      BranchPickerField(title: "Branch", selection: $existingBranch,
+                        localBranches: localBranches, remoteBranches: remoteBranches,
+                        stripsRemotePrefix: false)
       if !existingBranch.isEmpty {
         Text(isRemoteSelection
              ? "Creates local branch \(existingLocalName) tracking \(existingBranch)."
@@ -312,7 +298,9 @@ struct NewWorktreeView: View {
           Label("Worktree already exists at \(existing.path)", systemImage: "checkmark.circle")
             .font(.caption).foregroundStyle(.secondary)
         } else {
-          Text("Creates local branch \(existingLocalName) tracking \(existingBranch).")
+          Text(isRemoteSelection
+               ? "Creates local branch \(existingLocalName) tracking \(existingBranch)."
+               : "Checks out existing local branch \(existingBranch) (not currently in a worktree).")
             .font(.caption).foregroundStyle(.secondary)
           locationRow
         }
@@ -345,9 +333,11 @@ struct NewWorktreeView: View {
 
   private func reloadBranches() {
     fetchedTitle = nil
-    branchSearchText = ""
     existingBranch = ""
-    guard source == .existingBranch, let clone = selectedClone else { return }
+    // Always fetched, not just for the existing-branch/new-branch tabs: the
+    // Shared Config section's base-branch picker needs this regardless of
+    // which source tab is active.
+    guard let clone = selectedClone else { return }
     Task {
       let result = await Git.branches(in: clone.rootURL)
       localBranches = result.local
@@ -369,11 +359,13 @@ struct NewWorktreeView: View {
     }
     prLoading = true
     Task {
+      async let branchResult = Git.branches(in: clone.rootURL)
       do {
         prs = try await AzureService().pullRequests(remote: remote)
       } catch {
         prError = error.localizedDescription
       }
+      localBranches = await branchResult.local
       prLoading = false
     }
   }

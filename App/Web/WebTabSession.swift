@@ -38,6 +38,10 @@ final class WebTabSession: NSObject {
   /// auth callback URL) indefinitely while the page underneath has moved on.
   private var urlObservation: NSKeyValueObservation?
   private var titleObservation: NSKeyValueObservation?
+  /// An observer token, never view state — and `nonisolated(unsafe)` so
+  /// `deinit` (which isn't actor-isolated) can unregister it. Only ever
+  /// assigned once, in `init`.
+  @ObservationIgnored private nonisolated(unsafe) var zoomObserver: NSObjectProtocol?
 
   init(urlString: String) {
     self.currentURLString = urlString
@@ -67,7 +71,21 @@ final class WebTabSession: NSObject {
     titleObservation = webView.observe(\.title, options: [.new]) { [weak self] webView, _ in
       Task { @MainActor in self?.refreshState(from: webView) }
     }
+    // Another tab on the same host zooming should resize this one too, rather
+    // than the two drifting apart until one of them navigates again.
+    zoomObserver = NotificationCenter.default.addObserver(
+      forName: .webZoomChanged, object: nil, queue: .main) { [weak self] note in
+      let host = note.userInfo?["host"] as? String
+      Task { @MainActor in
+        guard let self, host == nil || host == self.currentHost else { return }
+        self.applyStoredZoom()
+      }
+    }
     load(urlString)
+  }
+
+  deinit {
+    if let zoomObserver { NotificationCenter.default.removeObserver(zoomObserver) }
   }
 
   /// Navigates to `raw`, adding an `https://` scheme if none was given —
@@ -84,12 +102,40 @@ final class WebTabSession: NSObject {
     if isLoading { webView.stopLoading() } else { webView.reload() }
   }
 
-  /// Backs the Cmd+/Cmd- "zoom" shortcut when this tab is focused — per-tab,
-  /// not a shared preference, since it's really about this page's content
-  /// rather than an app-wide setting (unlike the terminal's font size).
-  func zoomIn() { webView.pageZoom = min(3.0, webView.pageZoom + 0.1) }
-  func zoomOut() { webView.pageZoom = max(0.5, webView.pageZoom - 0.1) }
-  func zoomReset() { webView.pageZoom = 1.0 }
+  /// Backs the Cmd+/Cmd- "zoom" shortcut when this tab is focused. Persisted
+  /// per hostname (Safari-style) rather than per tab, so zooming one DevOps
+  /// work item sizes every DevOps tab the same way, now and on next launch.
+  func zoomIn() { setZoom(min(3.0, webView.pageZoom + 0.1)) }
+  func zoomOut() { setZoom(max(0.5, webView.pageZoom - 0.1)) }
+  func zoomReset() { setZoom(1.0) }
+
+  /// The live zoom, mirrored into observable state so the chrome can show it.
+  private(set) var pageZoom: Double = 1.0
+  /// Bumped only by the zoom *commands* — not by `applyStoredZoom` — so the
+  /// on-screen indicator appears when the user zooms, and stays out of the way
+  /// when a page merely loads at its stored size.
+  private(set) var userZoomCount = 0
+
+  private func setZoom(_ zoom: Double) {
+    webView.pageZoom = zoom
+    pageZoom = zoom
+    userZoomCount += 1
+    if let host = currentHost { AppSettings.setWebZoom(zoom, forHost: host) }
+  }
+
+  private var currentHost: String? {
+    webView.url?.host() ?? Self.normalizedURL(currentURLString)?.host()
+  }
+
+  /// Re-applies the stored zoom for whatever host the page is now on. Called
+  /// after each navigation (the host can change mid-tab) and when another tab
+  /// changes the same host's zoom.
+  private func applyStoredZoom() {
+    guard let host = currentHost else { return }
+    let stored = AppSettings.webZoom(forHost: host) ?? 1.0
+    if abs(webView.pageZoom - stored) > 0.001 { webView.pageZoom = stored }
+    pageZoom = stored
+  }
 
   static func normalizedURL(_ raw: String) -> URL? {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -130,6 +176,7 @@ extension WebTabSession: WKNavigationDelegate {
     canGoBack = webView.canGoBack
     canGoForward = webView.canGoForward
     title = webView.title?.isEmpty == false ? webView.title : nil
+    applyStoredZoom()
     if let url = webView.url {
       currentURLString = url.absoluteString
       // `_MsalSignedInFps` is MSAL's one-shot, sessionStorage-scoped

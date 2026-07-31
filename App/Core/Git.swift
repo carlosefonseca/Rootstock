@@ -167,11 +167,16 @@ enum Git {
   }
 
   /// Local and `origin` remote branch short-names, for picking an existing branch.
+  ///
+  /// `refs/remotes/origin/HEAD` is excluded explicitly rather than by filtering
+  /// the short name: it shortens to plain `origin` (not `origin/HEAD`), so a
+  /// suffix check misses it and a bogus "origin" entry ends up in the picker.
   static func branches(in directory: URL) async -> (local: [String], remote: [String]) {
     async let localResult = ShellRunner.run(
       "git for-each-ref --format='%(refname:short)' refs/heads", in: directory)
     async let remoteResult = ShellRunner.run(
-      "git for-each-ref --format='%(refname:short)' refs/remotes/origin", in: directory)
+      "git for-each-ref --format='%(refname:short)' --exclude=refs/remotes/origin/HEAD refs/remotes/origin",
+      in: directory)
 
     func parse(_ result: ShellResult) -> [String] {
       result.stdout
@@ -203,6 +208,15 @@ enum Git {
       else if key.hasSuffix(".url") { urls[name] = value }
     }
     return paths.map { GitSubmodule(path: $0.value, remoteURL: urls[$0.key]) }
+  }
+
+  /// Removes a linked worktree. Run from `directory` (the main worktree/clone
+  /// root), never from inside `path` itself, which is about to be deleted.
+  /// `force` is needed when the worktree has uncommitted changes — plain
+  /// `git worktree remove` refuses those.
+  static func removeWorktree(_ path: String, in directory: URL, force: Bool) async -> ShellResult {
+    let flag = force ? "--force " : ""
+    return await ShellRunner.run("git worktree remove \(flag)'\(path)'", in: directory)
   }
 
   static func lastFetch(in directory: URL) async -> Date? {

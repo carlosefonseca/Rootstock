@@ -108,6 +108,12 @@ final class WorkspaceModel {
     worktrees[clone.commonDir]?.first { $0.branch == branch }
   }
 
+  /// A clone's main checkout can't be removed with `git worktree remove` (it
+  /// isn't a linked worktree) — the UI needs to know to hide/disable delete.
+  func isMainWorktree(_ worktree: WorktreeInfo) -> Bool {
+    clone(forWorktree: worktree)?.rootPath == worktree.path
+  }
+
   // MARK: Clones
 
   private func reloadClones() {
@@ -159,6 +165,35 @@ final class WorkspaceModel {
     context.delete(clone)
     try? context.save()
     reloadClones()
+  }
+
+  /// Removes a linked worktree via `git worktree remove`, then drops its tabs,
+  /// cached PR link, and any reference to it here. `tabsStore`/`linksStore`
+  /// aren't owned by this model (they're view-layer environment objects), so
+  /// the caller passes them in for cleanup rather than this reaching out to them.
+  /// Returns the command's `stderr` on failure — e.g. uncommitted changes when
+  /// `force` is false — or `nil` on success.
+  @discardableResult
+  func deleteWorktree(_ worktree: WorktreeInfo, tabsStore: WorktreeTabsStore,
+                       linksStore: WorktreeLinksStore, force: Bool) async -> String? {
+    guard let clone = clone(forWorktree: worktree) else { return "No tracked clone found for this worktree." }
+    guard clone.rootPath != worktree.path else { return "Can't delete a clone's main worktree." }
+
+    let wasSelected = selectedPath == worktree.path
+    if wasSelected { selectAdjacentWorktree(offset: 1) }
+
+    let result = await Git.removeWorktree(worktree.path, in: clone.rootURL, force: force)
+    guard result.succeeded else {
+      if wasSelected { selectedPath = worktree.path }
+      return result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    tabsStore.closeAll(for: worktree)
+    linksStore.setPullRequestURL(nil, for: worktree)
+    recentPaths.removeAll { $0 == worktree.path }
+    await refreshClone(commonDir: clone.commonDir, rootURL: clone.rootURL)
+    if selectedPath == worktree.path { selectedPath = nil }
+    return nil
   }
 
   // MARK: Discovery & status

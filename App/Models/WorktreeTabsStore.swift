@@ -189,6 +189,17 @@ final class WorktreeTabsStore {
     session.onOpenInNewTab = { [weak self] linkURL in
       self?.addWebTab(for: worktree, urlString: linkURL)
     }
+    // Right-clicking an Azure DevOps work item / PR link inside the page
+    // attaches it to this worktree's branch config — the same write the
+    // "Add Work Item" / "Add Pull Request" popovers do.
+    session.onAddWorkItem = { url in
+      guard let branch = worktree.branch else { return }
+      BranchLinkAttachment.attach(workItem: url, worktree: worktree.url, branch: branch)
+    }
+    session.onAddPullRequest = { url in
+      guard let branch = worktree.branch else { return }
+      BranchLinkAttachment.attach(pullRequest: url, worktree: worktree.url, branch: branch)
+    }
     return MainTab(kind: .web, title: title, systemImage: systemImage, webSession: session)
   }
 

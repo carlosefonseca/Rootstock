@@ -25,6 +25,19 @@ final class WebTabSession: NSObject {
   /// Fired when the user picks "Open in New Tab" from a link's context menu.
   var onOpenInNewTab: ((String) -> Void)?
 
+  /// Fired when the user right-clicks an Azure DevOps work item / pull request
+  /// link and picks "Add as Work Item" / "Add as Pull Request" — attaching the
+  /// link to the worktree's branch config without retyping it into a popover.
+  var onAddWorkItem: ((WorkItemURL) -> Void)?
+  var onAddPullRequest: ((PullRequestURL) -> Void)?
+
+  /// The href of the link the last right-click landed on, reported by the
+  /// `contextmenu` user script (empty when the click wasn't on a link). WebKit
+  /// dispatches that JS event to the web process before asking the UI process
+  /// for a menu, so by the time `willOpenMenu` runs this already reflects the
+  /// current click.
+  private var contextLinkHref: String?
+
   /// Strong references to unparented popup webviews (see `createWebViewWith`)
   /// — kept alive between their creation and their own `window.close()`.
   private var childPopups: [WKWebView] = []
@@ -56,8 +69,19 @@ final class WebTabSession: NSObject {
     // adapt for Safari. Matching Safari's own installed version exactly gets
     // this webview treated the same way Safari itself would be.
     configuration.applicationNameForUserAgent = Self.safariUserAgentSuffix
-    self.webView = WKWebView(frame: .zero, configuration: configuration)
+    let controller = WKUserContentController()
+    controller.addUserScript(WKUserScript(source: Self.contextLinkScript,
+                                          injectionTime: .atDocumentStart,
+                                          forMainFrameOnly: false))
+    configuration.userContentController = controller
+    let webView = WebContextMenuWebView(frame: .zero, configuration: configuration)
+    self.webView = webView
     super.init()
+    // A weak hop, since the controller is reachable from the webview this
+    // session owns — registering `self` directly would retain-cycle the whole
+    // webview alive after its tab closes.
+    controller.add(WeakScriptMessageHandler(target: self), name: Self.contextLinkMessage)
+    webView.additionalMenuItems = { [weak self] in self?.linkMenuItems() ?? [] }
     webView.navigationDelegate = self
     webView.uiDelegate = self
     webView.allowsBackForwardNavigationGestures = true
@@ -102,6 +126,10 @@ final class WebTabSession: NSObject {
     if isLoading { webView.stopLoading() } else { webView.reload() }
   }
 
+  /// Backs Cmd+R, which every browser treats as "reload" unconditionally —
+  /// unlike the toolbar button, which doubles as Stop mid-load.
+  func reload() { webView.reload() }
+
   /// Backs the Cmd+/Cmd- "zoom" shortcut when this tab is focused. Persisted
   /// per hostname (Safari-style) rather than per tab, so zooming one DevOps
   /// work item sizes every DevOps tab the same way, now and on next launch.
@@ -143,6 +171,61 @@ final class WebTabSession: NSObject {
     if trimmed == "about:blank" { return URL(string: trimmed) }
     if trimmed.contains("://") { return URL(string: trimmed) }
     return URL(string: "https://\(trimmed)")
+  }
+
+  // MARK: Link context menu
+
+  private static let contextLinkMessage = "rootstockContextLink"
+
+  /// Reports the link under a right-click to the native side. Listens in the
+  /// capture phase and on every frame, so pages that swallow `contextmenu` on
+  /// their own elements (Azure DevOps' boards do) still tell us what was hit.
+  private static let contextLinkScript = """
+  document.addEventListener("contextmenu", function (event) {
+    var target = event.target;
+    var link = target && target.closest ? target.closest("a") : null;
+    window.webkit.messageHandlers.\(contextLinkMessage).postMessage(link ? link.href : "");
+  }, true);
+  """
+
+  fileprivate func receiveScriptMessage(named name: String, body: Any) {
+    guard name == Self.contextLinkMessage, let href = body as? String else { return }
+    contextLinkHref = href
+  }
+
+  /// The Rootstock-specific items prepended to WebKit's own right-click menu.
+  /// Both parsers already require an Azure DevOps host (`dev.azure.com` or the
+  /// legacy `{org}.visualstudio.com`) plus the right path shape, so a link that
+  /// parses is by definition one we can attach.
+  private func linkMenuItems() -> [NSMenuItem] {
+    guard let href = contextLinkHref, !href.isEmpty else { return [] }
+    var items: [NSMenuItem] = []
+    if let workItem = WorkItemURL.parse(href) {
+      items.append(menuItem(title: "Add as Work Item #\(workItem.id)",
+                            action: #selector(addWorkItemFromMenu(_:)), payload: workItem))
+    }
+    if let pullRequest = PullRequestURL.parse(href) {
+      items.append(menuItem(title: "Add as Pull Request #\(pullRequest.id)",
+                            action: #selector(addPullRequestFromMenu(_:)), payload: pullRequest))
+    }
+    return items
+  }
+
+  private func menuItem(title: String, action: Selector, payload: Any) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    item.target = self
+    item.representedObject = payload
+    return item
+  }
+
+  @objc private func addWorkItemFromMenu(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? WorkItemURL else { return }
+    onAddWorkItem?(url)
+  }
+
+  @objc private func addPullRequestFromMenu(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? PullRequestURL else { return }
+    onAddPullRequest?(url)
   }
 
   /// Reads the installed Safari's actual version rather than hardcoding one,
@@ -212,6 +295,25 @@ extension WebTabSession: WKNavigationDelegate {
         self.favicon = image
       }
     }
+  }
+}
+
+/// Forwards script messages without keeping its target alive — a
+/// `WKUserContentController` retains its handlers, and the controller is itself
+/// reachable from the webview the session owns. Delivery stays synchronous
+/// (no `Task` hop): WebKit dispatches the message and the context-menu request
+/// over the same connection, in that order, so hopping would risk the menu
+/// being built before the link it was clicked on had landed.
+@MainActor
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+  private weak var target: WebTabSession?
+
+  init(target: WebTabSession) {
+    self.target = target
+  }
+
+  func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+    target?.receiveScriptMessage(named: message.name, body: message.body)
   }
 }
 

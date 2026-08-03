@@ -104,6 +104,15 @@ struct MainTabBarView: View {
         Button("", action: zoomReset).keyboardShortcut("0", modifiers: .command)
       }
       .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
+      // Cmd+R reloads the page, as in any browser. Bound only while a web tab
+      // is selected: a view's shortcut beats the main menu's, so binding it
+      // unconditionally would shadow the app-wide "Refresh All" everywhere
+      // else.
+      if let session = selectedTab?.webSession {
+        Button("", action: { session.reload() })
+          .keyboardShortcut("r", modifiers: .command)
+          .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
+      }
     }
   }
 

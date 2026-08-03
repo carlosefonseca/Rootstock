@@ -68,18 +68,32 @@ struct AzureSection: View {
     }
   }
 
-  @ViewBuilder private var loadedContent: some View {
-    PullRequestCard(pr: model.pr, unresolved: model.unresolved, pipelines: model.pipelines, remote: model.remote,
-                    branch: worktree.branch, worktree: worktree, tabsStore: tabsStore)
-    if !model.additionalPRs.isEmpty {
-      Divider()
-      VStack(alignment: .leading, spacing: 10) {
-        Label("Additional Pull Requests", systemImage: "arrow.triangle.pull").font(.subheadline.weight(.medium))
-        ForEach(model.additionalPRs) { entry in
-          AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore)
+  @ViewBuilder private var pullRequestsSection: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack {
+        Label("Pull Requests", systemImage: "arrow.triangle.pull").font(.subheadline.weight(.medium))
+        Spacer()
+        if let branch = worktree.branch {
+          AddPullRequestButton(worktree: worktree, branch: branch)
+        }
+      }
+      // The branch's own auto-detected PR always leads the list, tagged with
+      // a "Branch" badge — everything else is manually attached, in the order
+      // it was added.
+      BranchPRRow(pr: model.pr, unresolved: model.unresolved, pipelines: model.pipelines, remote: model.remote,
+                  branch: worktree.branch, worktree: worktree, tabsStore: tabsStore)
+      ForEach(model.additionalPRs) { entry in
+        AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore) {
+          if let branch = worktree.branch {
+            model.removeAdditionalPR(worktree: worktree, branch: branch, url: entry.url)
+          }
         }
       }
     }
+  }
+
+  @ViewBuilder private var loadedContent: some View {
+    pullRequestsSection
     if let branch = worktree.branch {
       Divider()
       VStack(alignment: .leading, spacing: 10) {
@@ -105,7 +119,10 @@ struct AzureSection: View {
 
 // MARK: Pull request
 
-private struct PullRequestCard: View {
+/// The branch's own auto-detected PR (matched by source branch name) — always
+/// the first row in the merged pull-requests list, distinguished from
+/// manually-attached ones by the "Branch" badge.
+private struct BranchPRRow: View {
   var pr: ADOPullRequest?
   var unresolved: Int
   var pipelines: [WorktreeAzureModel.Pipeline]
@@ -116,10 +133,9 @@ private struct PullRequestCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("Pull Request", systemImage: "arrow.triangle.pull").font(.subheadline.weight(.medium))
-
       if let pr {
         HStack(spacing: 6) {
+          StatusPill(text: "Branch", tint: .indigo)
           StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
                      tint: (pr.isDraft ?? false) ? .secondary : .blue)
           if pr.mergeStatus == "conflicts" {
@@ -137,6 +153,16 @@ private struct PullRequestCard: View {
             }
           }
           .controlSize(.small).labelStyle(.iconOnly)
+          if let remote {
+            Menu {
+              Button("Copy URL") { copy(remote.pullRequestURL(id: pr.pullRequestId)) }
+              Button("Copy ID") { copy(String(pr.pullRequestId)) }
+            } label: {
+              Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+          }
         }
         Text(pr.title).font(.callout).lineLimit(2)
 
@@ -178,6 +204,11 @@ private struct PullRequestCard: View {
         }
       }
     }
+  }
+
+  private func copy(_ string: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(string, forType: .string)
   }
 }
 
@@ -363,28 +394,105 @@ private struct AdditionalPRCard: View {
   var entry: WorktreeAzureModel.AdditionalPREntry
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
+  var onRemove: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        if let pr = entry.pr {
-          StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
-                     tint: (pr.isDraft ?? false) ? .secondary : .blue)
-          if pr.mergeStatus == "conflicts" { StatusPill(text: "Conflicts", tint: .red) }
+        Group {
+          if let pr = entry.pr {
+            StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
+                       tint: (pr.isDraft ?? false) ? .secondary : .blue)
+            if pr.mergeStatus == "conflicts" { StatusPill(text: "Conflicts", tint: .red) }
+          }
+          // String(_:), not raw Int interpolation — Text(_:) parses an
+          // interpolated Int through LocalizedStringKey's number formatting,
+          // which inserts a locale thousands separator for values >= 1000.
+          Text("#\(String(entry.url.id))").font(.caption.monospaced()).foregroundStyle(.secondary)
         }
-        // String(_:), not raw Int interpolation — Text(_:) parses an
-        // interpolated Int through LocalizedStringKey's number formatting,
-        // which inserts a locale thousands separator for values >= 1000.
-        Text("#\(String(entry.url.id))").font(.caption.monospaced()).foregroundStyle(.secondary)
+        .contextMenu { menuItems }
         Spacer()
         Button("Open", systemImage: "arrow.up.right.square") {
           WebLinkOpener.open(entry.url.canonical, title: "PR #\(entry.url.id)",
                              systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
         }
         .controlSize(.small).labelStyle(.iconOnly)
+        Menu {
+          menuItems
+        } label: {
+          Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
       }
       if let title = entry.pr?.title { Text(title).font(.callout).lineLimit(2) }
     }
+  }
+
+  @ViewBuilder private var menuItems: some View {
+    Button("Copy URL") { copy(entry.url.canonical) }
+    Button("Copy ID") { copy(String(entry.url.id)) }
+    Divider()
+    Button("Remove", role: .destructive) { onRemove() }
+  }
+
+  private func copy(_ string: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(string, forType: .string)
+  }
+}
+
+/// Popover to paste a PR URL and attach it to the branch's shared config —
+/// mirrors `AddWorkItemButton`, for the common case of linking one more PR
+/// (e.g. the work was split across several) without opening the full sheet.
+private struct AddPullRequestButton: View {
+  var worktree: WorktreeInfo
+  var branch: String
+
+  @State private var showingPopover = false
+  @State private var urlText = ""
+  @State private var error: String?
+  @FocusState private var fieldFocused: Bool
+
+  var body: some View {
+    Button("Add Pull Request", systemImage: "plus.circle") { showingPopover = true }
+      .labelStyle(.iconOnly)
+      .buttonStyle(.borderless)
+      .controlSize(.small)
+      .popover(isPresented: $showingPopover) {
+        VStack(alignment: .leading, spacing: 10) {
+          Text("Add Pull Request").font(.headline)
+          TextField("Pull request URL", text: $urlText,
+                     prompt: Text("https://dev.azure.com/org/project/_git/repo/pullrequest/12345"))
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 320)
+            .focused($fieldFocused)
+            .onSubmit { add() }
+          if let error {
+            Text(error).font(.caption).foregroundStyle(.red)
+          }
+          HStack {
+            Spacer()
+            Button("Cancel") { showingPopover = false }
+            Button("Add") { add() }
+              .keyboardShortcut(.defaultAction)
+              .disabled(urlText.isEmpty)
+          }
+        }
+        .padding(16)
+        .onAppear { fieldFocused = true }
+      }
+  }
+
+  private func add() {
+    guard let parsed = PullRequestURL.parse(urlText) else {
+      error = "Not a recognized pull request URL"
+      return
+    }
+    BranchLinkAttachment.attach(pullRequest: parsed, worktree: worktree.url, branch: branch)
+    urlText = ""
+    error = nil
+    showingPopover = false
   }
 }
 
@@ -488,15 +596,10 @@ private struct AddWorkItemButton: View {
       error = "Not a recognized work item URL"
       return
     }
-    var config = BranchConfig.load(worktree: worktree.url, branch: branch)
-    if !config.workItemURLs.contains(parsed.canonical) {
-      config.workItemURLs.append(parsed.canonical)
-      try? config.save(worktree: worktree.url, branch: branch)
-    }
+    BranchLinkAttachment.attach(workItem: parsed, worktree: worktree.url, branch: branch)
     urlText = ""
     error = nil
     showingPopover = false
-    NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
 }
 

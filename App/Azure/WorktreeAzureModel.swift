@@ -139,6 +139,14 @@ final class WorktreeAzureModel {
     NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
 
+  /// Removes a manually-attached PR from the branch's shared config and re-fetches.
+  func removeAdditionalPR(worktree: WorktreeInfo, branch: String, url: PullRequestURL) {
+    var config = BranchConfig.load(worktree: worktree.url, branch: branch)
+    config.additionalPRURLs.removeAll { $0 == url.canonical }
+    try? config.save(worktree: worktree.url, branch: branch)
+    NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
+  }
+
   private func resolveWorkItems(worktree: WorktreeInfo, branch: String, prDescription: String?) async {
     let config = BranchConfig.load(worktree: worktree.url, branch: branch)
     let configured = config.workItemURLs.compactMap { WorkItemURL.parse($0) }

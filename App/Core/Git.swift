@@ -20,6 +20,10 @@ struct WorktreeStatus: Hashable {
   var branch: String?
 
   var hasUpstream = false
+  /// The upstream's full name as git reports it, e.g. `origin/feature/foo` —
+  /// worth surfacing when it isn't simply `<remote>/<this branch>`, since then
+  /// "its remote" is pushing somewhere other than the obvious place.
+  var upstream: String?
   var remoteAhead = 0
   var remoteBehind = 0
 
@@ -124,6 +128,8 @@ enum Git {
       let line = String(rawLine)
       if line.hasPrefix("# branch.head ") {
         status.branch = String(line.dropFirst("# branch.head ".count))
+      } else if line.hasPrefix("# branch.upstream ") {
+        status.upstream = String(line.dropFirst("# branch.upstream ".count))
       } else if line.hasPrefix("# branch.ab ") {
         status.hasUpstream = true
         let parts = line.dropFirst("# branch.ab ".count).split(separator: " ")

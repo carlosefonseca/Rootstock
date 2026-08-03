@@ -198,11 +198,26 @@ struct StatusSectionBody: View {
     if !status.hasUpstream {
       StatusLine(icon: "arrow.up.arrow.down.circle", tint: .secondary, text: "No upstream branch set")
     } else if status.remoteAhead == 0 && status.remoteBehind == 0 {
-      StatusLine(icon: "checkmark.circle", tint: .secondary, text: "In sync with its remote")
+      StatusLine(icon: "checkmark.circle", tint: .secondary,
+                 text: "In sync with its remote\(upstreamNote(status))")
     } else {
       StatusLine(icon: "arrow.up.arrow.down.circle.fill", tint: .blue,
-                 text: "Branch is \(syncText(ahead: status.remoteAhead, behind: status.remoteBehind)) its remote")
+                 text: "Branch is \(syncText(ahead: status.remoteAhead, behind: status.remoteBehind))"
+                       + " its remote\(upstreamNote(status))")
     }
+  }
+
+  /// Names the upstream only when it isn't `<remote>/<this branch>` — the
+  /// tracking branch usually matches, so spelling it out every time would be
+  /// noise, but when it doesn't, "its remote" is somewhere non-obvious and
+  /// that's exactly what a push is about to update.
+  private func upstreamNote(_ status: WorktreeStatus) -> String {
+    guard let upstream = status.upstream else { return "" }
+    // Remote names can't contain "/", so everything after the first one is the
+    // branch name — which itself often does (feature/foo).
+    let trackedBranch = upstream.split(separator: "/", maxSplits: 1).last.map(String.init)
+    guard let trackedBranch, trackedBranch != status.branch else { return "" }
+    return " (\(upstream))"
   }
 
   @ViewBuilder private func baseRow(_ status: WorktreeStatus) -> some View {

@@ -18,8 +18,14 @@ struct AzureSection: View {
   var body: some View {
     CollapsibleCard(title: "Azure DevOps", systemImage: "cloud", stateKey: "azure") {
       if model.phase != .notConfigured {
-        Button("Reload", systemImage: "arrow.clockwise") { startReload() }
-          .controlSize(.small).labelStyle(.iconOnly).buttonStyle(.borderless)
+        // The spinner replaces the button in place rather than sitting beside
+        // it, so the header doesn't reflow every time something refreshes.
+        if model.isReloading {
+          ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 18)
+        } else {
+          Button("Reload", systemImage: "arrow.clockwise") { startReload() }
+            .controlSize(.small).labelStyle(.iconOnly).buttonStyle(.borderless)
+        }
       }
     } content: {
       content
@@ -81,7 +87,15 @@ struct AzureSection: View {
       // a "Branch" badge — everything else is manually attached, in the order
       // it was added.
       BranchPRRow(pr: model.pr, unresolved: model.unresolved, pipelines: model.pipelines, remote: model.remote,
-                  branch: worktree.branch, worktree: worktree, tabsStore: tabsStore)
+                  branch: worktree.branch, worktree: worktree, tabsStore: tabsStore,
+                  queueing: model.queueingPipelines,
+                  onRun: { pipeline in
+                    guard let branch = worktree.branch else { return }
+                    Task { await model.runPipeline(pipeline, branch: branch) }
+                  })
+      if let queueError = model.queueError {
+        InlineErrorLine(message: queueError) { model.clearQueueError() }
+      }
       ForEach(model.additionalPRs) { entry in
         AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore) {
           if let branch = worktree.branch {
@@ -93,6 +107,9 @@ struct AzureSection: View {
   }
 
   @ViewBuilder private var loadedContent: some View {
+    if let reloadError = model.reloadError {
+      InlineErrorLine(message: reloadError) { model.clearReloadError() }
+    }
     pullRequestsSection
     if let branch = worktree.branch {
       Divider()
@@ -117,6 +134,25 @@ struct AzureSection: View {
   }
 }
 
+/// A dismissible one-line problem report that sits next to the content it's
+/// about, for failures the section can survive — a refresh that didn't land, a
+/// pipeline that wouldn't queue — as opposed to `.failed`, which replaces
+/// everything.
+private struct InlineErrorLine: View {
+  var message: String
+  var onDismiss: () -> Void
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Label(message, systemImage: "exclamationmark.triangle")
+        .font(.caption).foregroundStyle(.orange)
+      Spacer(minLength: 0)
+      Button("Dismiss", action: onDismiss)
+        .buttonStyle(.plain).font(.caption).foregroundStyle(.tint)
+    }
+  }
+}
+
 // MARK: Pull request
 
 /// The branch's own auto-detected PR (matched by source branch name) — always
@@ -130,58 +166,67 @@ private struct BranchPRRow: View {
   var branch: String?
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
+  var queueing: Set<Int>
+  var onRun: (WorktreeAzureModel.Pipeline) -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       if let pr {
-        HStack(spacing: 6) {
-          StatusPill(text: "Branch", tint: .indigo)
-          StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
-                     tint: (pr.isDraft ?? false) ? .secondary : .blue)
-          if pr.mergeStatus == "conflicts" {
-            StatusPill(text: "Conflicts", tint: .red)
-          }
-          // String(_:), not raw Int interpolation — Text(_:) parses an
-          // interpolated Int through LocalizedStringKey's number formatting,
-          // which inserts a locale thousands separator for values >= 1000.
-          Text("#\(String(pr.pullRequestId))").font(.caption.monospaced()).foregroundStyle(.secondary)
-          Spacer()
-          Button("Open", systemImage: "arrow.up.right.square") {
-            if let remote {
-              WebLinkOpener.open(remote.pullRequestURL(id: pr.pullRequestId), title: "Pull Request",
-                                 systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
+        // Nested rather than inlined into the outer stack purely so the context
+        // menu covers this whole row and nothing else — the empty "No active
+        // pull request" state below has nothing to copy.
+        VStack(alignment: .leading, spacing: 8) {
+          HStack(spacing: 6) {
+            StatusPill(text: "Branch", tint: .indigo)
+            StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
+                       tint: (pr.isDraft ?? false) ? .secondary : .blue)
+            if pr.mergeStatus == "conflicts" {
+              StatusPill(text: "Conflicts", tint: .red)
             }
-          }
-          .controlSize(.small).labelStyle(.iconOnly)
-          if let remote {
+            // String(_:), not raw Int interpolation — Text(_:) parses an
+            // interpolated Int through LocalizedStringKey's number formatting,
+            // which inserts a locale thousands separator for values >= 1000.
+            Text("#\(String(pr.pullRequestId))").font(.caption.monospaced()).foregroundStyle(.secondary)
+            Spacer()
+            Button("Open", systemImage: "arrow.up.right.square") {
+              if let remote {
+                WebLinkOpener.open(remote.pullRequestURL(id: pr.pullRequestId), title: "Pull Request",
+                                   systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
+              }
+            }
+            .controlSize(.small).labelStyle(.iconOnly)
             Menu {
-              Button("Copy URL") { copy(remote.pullRequestURL(id: pr.pullRequestId)) }
-              Button("Copy ID") { copy(String(pr.pullRequestId)) }
+              menuItems(for: pr)
             } label: {
               Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
           }
-        }
-        Text(pr.title).font(.callout).lineLimit(2)
+          Text(pr.title).font(.callout).lineLimit(2)
 
-        if !pipelines.isEmpty {
-          VStack(alignment: .leading, spacing: 4) {
-            ForEach(pipelines) { pipeline in
-              PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore)
+          if !pipelines.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+              ForEach(pipelines) { pipeline in
+                PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore,
+                             runsOnPR: true,
+                             isQueueing: queueing.contains(pipeline.id),
+                             onRun: { onRun(pipeline) })
+              }
             }
           }
-        }
 
-        if let reviewers = pr.reviewers, !reviewers.isEmpty {
-          ReviewerRow(reviewers: reviewers, org: remote?.org ?? "")
+          if let reviewers = pr.reviewers, !reviewers.isEmpty {
+            ReviewerRow(reviewers: reviewers, org: remote?.org ?? "")
+          }
+          if unresolved > 0 {
+            Label("\(unresolved) unresolved comment\(unresolved == 1 ? "" : "s")",
+                  systemImage: "bubble.left")
+              .font(.caption).foregroundStyle(.orange)
+          }
         }
-        if unresolved > 0 {
-          Label("\(unresolved) unresolved comment\(unresolved == 1 ? "" : "s")",
-                systemImage: "bubble.left")
-            .font(.caption).foregroundStyle(.orange)
-        }
+        .contentShape(.rect)
+        .contextMenu { menuItems(for: pr) }
       } else {
         HStack {
           Text("No active pull request.").font(.callout).foregroundStyle(.secondary)
@@ -198,12 +243,26 @@ private struct BranchPRRow: View {
         if !pipelines.isEmpty {
           VStack(alignment: .leading, spacing: 4) {
             ForEach(pipelines) { pipeline in
-              PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore)
+              PipelinePill(pipeline: pipeline, worktree: worktree, tabsStore: tabsStore,
+                           runsOnPR: false,
+                           isQueueing: queueing.contains(pipeline.id),
+                           onRun: { onRun(pipeline) })
             }
           }
         }
       }
     }
+  }
+
+  /// Shared by the row's context menu and its "…" button, so right-clicking
+  /// and clicking offer the same thing — as in the attached-PR and work item
+  /// rows. No Remove here: this PR is detected from the branch name, not
+  /// attached by hand.
+  @ViewBuilder private func menuItems(for pr: ADOPullRequest) -> some View {
+    if let remote {
+      Button("Copy URL") { copy(remote.pullRequestURL(id: pr.pullRequestId)) }
+    }
+    Button("Copy ID") { copy(String(pr.pullRequestId)) }
   }
 
   private func copy(_ string: String) {
@@ -306,33 +365,58 @@ private struct PipelinePill: View {
   var pipeline: WorktreeAzureModel.Pipeline
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
+  /// Whether triggering a run will queue against the PR's merge ref — decided
+  /// by the model (it always prefers the PR when there is one), so the title
+  /// can say which, rather than guessing from this pill's last run.
+  var runsOnPR: Bool
+  var isQueueing: Bool
+  var onRun: () -> Void
 
   var body: some View {
-    Button {
-      if let url = pipeline.url {
-        WebLinkOpener.open(url, title: pipeline.name, systemImage: "checkmark.seal",
-                           worktree: worktree, tabsStore: tabsStore)
-      }
-    } label: {
-      HStack(spacing: 6) {
-        Text(sourceLabel)
-          .font(.caption2.weight(.semibold))
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 5).padding(.vertical, 1)
-          .background(.secondary.opacity(0.15), in: .capsule)
-        Text(pipeline.name).font(.caption).foregroundStyle(.primary)
-        if let label = pipeline.label {
-          Text(label).font(.caption).foregroundStyle(.secondary)
+    // The run control is a sibling of the pill button rather than nested inside
+    // its label — a Button inside a Button is a hit-testing coin flip on macOS,
+    // and the pill's trailing Spacer already leaves it pinned to the edge.
+    HStack(spacing: 4) {
+      Button {
+        if let url = pipeline.url {
+          WebLinkOpener.open(url, title: pipeline.name, systemImage: "checkmark.seal",
+                             worktree: worktree, tabsStore: tabsStore)
         }
-        Label(text, systemImage: icon).font(.caption.weight(.medium)).foregroundStyle(tint)
-        Spacer(minLength: 0)
+      } label: {
+        HStack(spacing: 6) {
+          Text(sourceLabel)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(.secondary.opacity(0.15), in: .capsule)
+          Text(pipeline.name).font(.caption).foregroundStyle(.primary)
+          if let label = pipeline.label {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+          }
+          Label(text, systemImage: icon).font(.caption.weight(.medium)).foregroundStyle(tint)
+          Spacer(minLength: 0)
+        }
+      }
+      .buttonStyle(.plain)
+      .help(pipeline.url != nil
+            ? "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text). Click to open."
+            : "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text)")
+
+      if isQueueing {
+        ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 16)
+      } else {
+        Button(runTitle, systemImage: "play.circle") { onRun() }
+          .buttonStyle(.plain)
+          .labelStyle(.iconOnly)
+          .font(.caption)
+          .foregroundStyle(.tint)
+          .help(runTitle)
       }
     }
-    .buttonStyle(.plain)
-    .help(pipeline.url != nil
-          ? "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text). Click to open."
-          : "\(pipeline.name) — \(sourceHelp) — \(pipeline.label ?? "Latest build") — \(text)")
     .contextMenu {
+      Button(runTitle) { onRun() }
+        .disabled(isQueueing)
+      Divider()
       Button("Copy Name") { copy(pipeline.name) }
       if let label = pipeline.label {
         Button("Copy Build Number") { copy(label) }
@@ -341,6 +425,10 @@ private struct PipelinePill: View {
         Button("Copy URL") { copy(url) }
       }
     }
+  }
+
+  private var runTitle: String {
+    runsOnPR ? "Run on Pull Request" : "Run on Branch"
   }
 
   private func copy(_ string: String) {
@@ -410,7 +498,6 @@ private struct AdditionalPRCard: View {
           // which inserts a locale thousands separator for values >= 1000.
           Text("#\(String(entry.url.id))").font(.caption.monospaced()).foregroundStyle(.secondary)
         }
-        .contextMenu { menuItems }
         Spacer()
         Button("Open", systemImage: "arrow.up.right.square") {
           WebLinkOpener.open(entry.url.canonical, title: "PR #\(entry.url.id)",
@@ -427,6 +514,8 @@ private struct AdditionalPRCard: View {
       }
       if let title = entry.pr?.title { Text(title).font(.callout).lineLimit(2) }
     }
+    .contentShape(.rect)
+    .contextMenu { menuItems }
   }
 
   @ViewBuilder private var menuItems: some View {
@@ -518,11 +607,6 @@ private struct WorkItemCard: View {
             Text("#\(entry.url.id)").font(.callout.monospaced()).foregroundStyle(.secondary)
           }
         }
-        .contextMenu {
-          Button("Copy URL") { copy(entry.url.canonical) }
-          Divider()
-          Button("Remove", role: .destructive) { onRemove() }
-        }
         Spacer()
         Button("Open", systemImage: "arrow.up.right.square") {
           WebLinkOpener.open(entry.url.canonical, title: "Work Item #\(entry.url.id)",
@@ -530,9 +614,7 @@ private struct WorkItemCard: View {
         }
         .controlSize(.small).labelStyle(.iconOnly)
         Menu {
-          Button("Copy URL") { copy(entry.url.canonical) }
-          Divider()
-          Button("Remove", role: .destructive) { onRemove() }
+          menuItems
         } label: {
           Image(systemName: "ellipsis.circle")
         }
@@ -541,6 +623,17 @@ private struct WorkItemCard: View {
       }
       if let title = entry.detail?.title { Text(title).font(.callout).lineLimit(2) }
     }
+    .contentShape(.rect)
+    .contextMenu { menuItems }
+  }
+
+  /// The work item's ID is already a string in the URL, so no `String(_:)`
+  /// dance is needed here the way it is for the Int-keyed PR rows.
+  @ViewBuilder private var menuItems: some View {
+    Button("Copy URL") { copy(entry.url.canonical) }
+    Button("Copy ID") { copy(entry.url.id) }
+    Divider()
+    Button("Remove", role: .destructive) { onRemove() }
   }
 
   private func copy(_ string: String) {

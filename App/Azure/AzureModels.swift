@@ -130,6 +130,46 @@ struct ADOStatus: Decodable {
   }
 }
 
+/// A project's identity. Only the GUID matters here: PR-scoped policy
+/// evaluations are addressed by an artifact id built from it, and the project
+/// *name* in a clone URL won't do.
+struct ADOProject: Decodable {
+  var id: String
+  var name: String?
+}
+
+/// One branch-policy evaluation against a specific pull request — the thing the
+/// PR page lists under "Checks". A build-validation policy shows up here with
+/// its `buildDefinitionId` in settings, which is what ties it back to the
+/// pipeline pills (they're keyed by definition id too).
+struct ADOPolicyEvaluation: Decodable {
+  var evaluationId: String
+  var status: String?           // queued / running / approved / rejected / notApplicable
+  var configuration: Configuration?
+
+  struct Configuration: Decodable {
+    var id: Int?
+    /// False for an optional check — the ones worth a manual trigger, since
+    /// nothing queues them automatically on every push.
+    var isBlocking: Bool?
+    var isEnabled: Bool?
+    var type: PolicyType?
+    var settings: Settings?
+
+    struct PolicyType: Decodable {
+      var id: String?
+      var displayName: String?  // "Build", "Minimum number of reviewers", …
+    }
+    struct Settings: Decodable {
+      var buildDefinitionId: Int?
+      var displayName: String?
+    }
+  }
+
+  var buildDefinitionId: Int? { configuration?.settings?.buildDefinitionId }
+  var isBuildPolicy: Bool { buildDefinitionId != nil }
+}
+
 // MARK: Work items
 
 struct ADOWorkItem: Decodable, Identifiable {

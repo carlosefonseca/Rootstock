@@ -125,6 +125,53 @@ struct AzureService {
     return Array(merged.values)
   }
 
+  /// Queues a new run of `definitionId`.
+  ///
+  /// `sourceRef` decides what gets built, and it's the whole point of the
+  /// distinction `latestBuildsByPipeline` already draws: queueing
+  /// `refs/pull/<id>/merge` reruns the pipeline the way the PR's own validation
+  /// build runs it (against the merged result), which is what an optional build
+  /// policy on the PR is showing. `refs/heads/<branch>` just rebuilds the branch
+  /// tip.
+  ///
+  /// Returns the queued build, already carrying its id, definition, and web URL
+  /// so the caller can show it immediately.
+  func queueBuild(remote: AzureRemote, definitionId: Int, sourceRef: String) async throws -> ADOBuild {
+    try await client.post(ADOBuild.self, org: remote.org,
+      path: "\(encode(remote.project))/_apis/build/builds",
+      body: [
+        "definition": ["id": definitionId],
+        "sourceBranch": sourceRef,
+      ])
+  }
+
+  /// The project's GUID, needed to address PR-scoped policy evaluations.
+  func projectId(remote: AzureRemote) async throws -> String {
+    let project = try await client.get(ADOProject.self, org: remote.org,
+      path: "_apis/projects/\(encode(remote.project))")
+    return project.id
+  }
+
+  /// The branch policies being evaluated against this PR — the "Checks" list on
+  /// the PR page, required and optional alike.
+  func policyEvaluations(remote: AzureRemote, projectId: String, prId: Int) async -> [ADOPolicyEvaluation] {
+    let list = try? await client.get(ADOList<ADOPolicyEvaluation>.self, org: remote.org,
+      path: "\(encode(remote.project))/_apis/policy/evaluations",
+      query: ["artifactId": "vstfs:///CodeReview/CodeReviewId/\(projectId)/\(prId)"],
+      apiVersion: "7.1-preview.1")
+    return list?.value ?? []
+  }
+
+  /// Requeues one policy evaluation — the API behind the "Queue"/"Re-queue"
+  /// link the PR page shows next to a build check. Unlike `queueBuild`, this
+  /// runs the build *as the policy*, so the PR's own check entry updates rather
+  /// than a detached build appearing beside it.
+  func requeuePolicyEvaluation(remote: AzureRemote, evaluationId: String) async throws {
+    try await client.patch(ADOPolicyEvaluation.self, org: remote.org,
+      path: "\(encode(remote.project))/_apis/policy/evaluations/\(evaluationId)",
+      apiVersion: "7.1-preview.1")
+  }
+
   /// Work item detail from the (possibly different) work-item org. Scoped to
   /// `project` when known, which matters when the work items live in a different
   /// org/project than the code (the two-org setup).

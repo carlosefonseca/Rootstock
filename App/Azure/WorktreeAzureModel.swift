@@ -53,6 +53,19 @@ final class WorktreeAzureModel {
   private(set) var pr: ADOPullRequest?
   private(set) var unresolved = 0
   private(set) var pipelines: [Pipeline] = []
+  /// Definition ids with a queue request in flight, so the pill can show a
+  /// spinner instead of letting the user queue the same pipeline twice.
+  private(set) var queueingPipelines: Set<Int> = []
+  /// Why the last manual queue failed, if it did — most often a permissions
+  /// problem (a PAT without Build: Read & execute), which is worth showing
+  /// rather than swallowing.
+  private(set) var queueError: String?
+  /// True while a load is in flight over content that's already on screen, so
+  /// the header can show a spinner without the section blanking itself out.
+  private(set) var isReloading = false
+  /// A refresh that failed while there was still good data to show — reported
+  /// alongside the stale content instead of replacing it with `.failed`.
+  private(set) var reloadError: String?
   private(set) var workItems: [WorkItemEntry] = []
   private(set) var additionalPRs: [AdditionalPREntry] = []
   /// A work-item link found in the PR description that isn't in the configured
@@ -64,6 +77,11 @@ final class WorktreeAzureModel {
   // was seeing these desync from `phase` when they lived on split @State/
   // @Observable storage.
   private(set) var remote: AzureRemote?
+
+  /// Which worktree the currently-held content belongs to. The section's view —
+  /// and so this model — survives a switch between worktrees, and last
+  /// worktree's PR must not linger under the new one's heading while it loads.
+  private var loadedWorktreePath: String?
 
   private let service = AzureService()
 
@@ -79,7 +97,20 @@ final class WorktreeAzureModel {
       phase = .notConfigured
       return
     }
-    phase = .loading
+
+    // A reload over content that's already up shouldn't tear it down: the new
+    // values land field by field as they arrive, and until then the previous
+    // ones stay readable. Only a first load — or a switch to a different
+    // worktree, whose data this is not — goes through the empty `.loading`
+    // state.
+    let isSameWorktree = loadedWorktreePath == worktree.path
+    if !isSameWorktree { clearContent() }
+    let showingContent = phase == .loaded && isSameWorktree
+    if !showingContent { phase = .loading }
+    loadedWorktreePath = worktree.path
+    isReloading = true
+    reloadError = nil
+    defer { isReloading = false }
 
     var prFailure: Error?
     if let remote {
@@ -97,9 +128,14 @@ final class WorktreeAzureModel {
         }
       } catch {
         prFailure = error
-        self.pr = nil
-        self.unresolved = 0
-        self.pipelines = []
+        // Keep whatever was already on screen when a refresh fails — a dropped
+        // network or an expired session shouldn't cost the user the PR they
+        // were looking at. There's nothing to keep on a first load.
+        if !showingContent {
+          self.pr = nil
+          self.unresolved = 0
+          self.pipelines = []
+        }
       }
     } else {
       self.pr = nil
@@ -112,11 +148,25 @@ final class WorktreeAzureModel {
 
     if remote == nil && workItems.isEmpty && detectedWorkItem == nil && additionalPRs.isEmpty {
       phase = .notConfigured
-    } else if let prFailure, workItems.isEmpty {
+    } else if let prFailure, workItems.isEmpty, !showingContent {
       phase = .failed(prFailure.localizedDescription)
     } else {
       phase = .loaded
+      reloadError = prFailure?.localizedDescription
     }
+  }
+
+  func clearReloadError() { reloadError = nil }
+
+  private func clearContent() {
+    pr = nil
+    unresolved = 0
+    pipelines = []
+    workItems = []
+    additionalPRs = []
+    detectedWorkItem = nil
+    reloadError = nil
+    queueError = nil
   }
 
   /// Adds the detected suggestion to the branch's shared config and re-fetches.
@@ -138,6 +188,52 @@ final class WorktreeAzureModel {
     try? config.save(worktree: worktree.url, branch: branch)
     NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
+
+  /// Triggers a fresh run of `pipeline` and refreshes the pipeline list so the
+  /// pill flips to "Running" without waiting for the next full reload.
+  ///
+  /// Two different things can be meant by "run this again", and which one
+  /// happens matters:
+  ///
+  /// - When this pipeline is a *build validation policy* on the PR (the common
+  ///   case for an optional check), the policy evaluation is requeued — the
+  ///   same call the PR page's "Queue" link makes, so the PR's own check entry
+  ///   goes back to running and records the result.
+  /// - Otherwise the build is queued directly, against the PR's merge ref if
+  ///   there is a PR (matching how a validation build runs) or the branch tip
+  ///   if there isn't. That produces a real build but no PR check entry.
+  func runPipeline(_ pipeline: Pipeline, branch: String) async {
+    guard let remote, !queueingPipelines.contains(pipeline.id) else { return }
+    let prId = pr?.pullRequestId
+
+    queueingPipelines.insert(pipeline.id)
+    queueError = nil
+    defer { queueingPipelines.remove(pipeline.id) }
+    do {
+      if let prId, let evaluationId = await policyEvaluation(forDefinition: pipeline.id, remote: remote, prId: prId) {
+        try await service.requeuePolicyEvaluation(remote: remote, evaluationId: evaluationId)
+      } else {
+        let sourceRef = prId.map { "refs/pull/\($0)/merge" } ?? "refs/heads/\(branch)"
+        _ = try await service.queueBuild(remote: remote, definitionId: pipeline.id, sourceRef: sourceRef)
+      }
+      let builds = await service.latestBuildsByPipeline(remote: remote, branch: branch, prId: prId)
+      pipelines = pipelines(from: builds)
+    } catch {
+      queueError = error.localizedDescription
+    }
+  }
+
+  /// The PR's policy evaluation driven by this build definition, if the pipeline
+  /// is wired up as a branch policy at all. Fetched on demand rather than during
+  /// `load` — it costs two extra requests and only matters when the user
+  /// actually triggers something.
+  private func policyEvaluation(forDefinition definitionId: Int, remote: AzureRemote, prId: Int) async -> String? {
+    guard let projectId = try? await service.projectId(remote: remote) else { return nil }
+    let evaluations = await service.policyEvaluations(remote: remote, projectId: projectId, prId: prId)
+    return evaluations.first { $0.buildDefinitionId == definitionId }?.evaluationId
+  }
+
+  func clearQueueError() { queueError = nil }
 
   /// Removes a manually-attached PR from the branch's shared config and re-fetches.
   func removeAdditionalPR(worktree: WorktreeInfo, branch: String, url: PullRequestURL) {

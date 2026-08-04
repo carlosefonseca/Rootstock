@@ -57,6 +57,30 @@ struct AzureClient {
   /// project segment when needed). `query` is merged with the api-version.
   func get<T: Decodable>(_ type: T.Type, org: String, path: String,
                          query: [String: String] = [:], apiVersion: String? = nil) async throws -> T {
+    try await send(type, method: "GET", org: org, path: path, query: query, apiVersion: apiVersion)
+  }
+
+  /// POSTs `body` as JSON to `path` and decodes the created resource — the write
+  /// counterpart to `get`, used for queueing builds.
+  func post<T: Decodable>(_ type: T.Type, org: String, path: String, body: [String: Any],
+                          query: [String: String] = [:], apiVersion: String? = nil) async throws -> T {
+    let data = try JSONSerialization.data(withJSONObject: body)
+    return try await send(type, method: "POST", org: org, path: path, query: query,
+                          apiVersion: apiVersion, body: data)
+  }
+
+  /// PATCHes `path` with no body — how ADO models "requeue this policy
+  /// evaluation".
+  @discardableResult
+  func patch<T: Decodable>(_ type: T.Type, org: String, path: String,
+                           query: [String: String] = [:], apiVersion: String? = nil) async throws -> T {
+    try await send(type, method: "PATCH", org: org, path: path, query: query, apiVersion: apiVersion,
+                   body: Data("{}".utf8))
+  }
+
+  private func send<T: Decodable>(_ type: T.Type, method: String, org: String, path: String,
+                                  query: [String: String], apiVersion: String?,
+                                  body: Data? = nil) async throws -> T {
     guard let token = await AzureAuth.shared.token(forOrg: org) else {
       throw AzureError.noCredential(org: org, detail: await AzureAuth.shared.lastAzFailure)
     }
@@ -66,8 +90,13 @@ struct AzureClient {
     comps.queryItems = items
 
     var request = URLRequest(url: comps.url!)
+    request.httpMethod = method
     request.setValue(token.authorizationHeader, forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Accept")
+    if let body {
+      request.httpBody = body
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    }
 
     let (data, response) = try await session.data(for: request)
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0

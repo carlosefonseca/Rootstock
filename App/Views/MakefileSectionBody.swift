@@ -83,7 +83,7 @@ struct MakefileSectionBody: View {
   }
 }
 
-/// The fixed ~12-line inline output panel below the button grid.
+/// The fixed ~8-line inline output panel below the button grid.
 struct CommandOutputPanel: View {
   @Bindable var runner: CommandRunner
   var worktree: WorktreeInfo
@@ -121,7 +121,10 @@ struct CommandOutputPanel: View {
             .padding(8)
             .id("bottom-anchor")
         }
-        .frame(height: 190)
+        // ~8 lines of caption-monospaced output plus the 8pt padding above and
+        // below it — enough to watch a build scroll by without the panel
+        // pushing the rest of the inspector off screen.
+        .frame(height: 120)
         .onChange(of: runner.output) {
           withAnimation { proxy.scrollTo("bottom-anchor", anchor: .bottom) }
         }

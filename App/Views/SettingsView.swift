@@ -142,6 +142,13 @@ private struct AzureSettingsView: View {
   @State private var orgs: [String] = []
   @State private var azAvailable: Bool?
   @State private var newOrg = ""
+  @State private var isRefreshing = false
+  @State private var refreshMessage: String?
+  @State private var refreshSucceeded = true
+
+  /// What to run when refreshing isn't enough. Kept as one string so the label
+  /// and the thing that lands on the clipboard can't disagree.
+  private static let signInCommand = "az logout && az login"
 
   var body: some View {
     Form {
@@ -154,6 +161,32 @@ private struct AzureSettingsView: View {
             Text("Rootstock uses a PAT when set, otherwise your `az` session. Some orgs require a PAT even with AAD.")
               .font(.caption).foregroundStyle(.secondary)
           }
+        }
+
+        // Spelled out because the two repairs are not interchangeable and the
+        // difference is easy to forget mid-annoyance: refreshing renews the
+        // token silently and fixes most failures, and only when it can't does
+        // the sign-in itself need redoing.
+        VStack(alignment: .leading, spacing: 6) {
+          Text("If Azure DevOps requests start failing, refresh the token first — that renews it through `az` without any sign-in. When the refresh fails too, the sign-in has lapsed: run \(Text("`\(Self.signInCommand)`").font(.caption.monospaced())) in a terminal, then refresh again.")
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+          HStack(spacing: 8) {
+            Button("Refresh Token") { Task { await refreshToken() } }
+              .disabled(isRefreshing)
+            Button("Copy Sign-In Command", systemImage: "doc.on.doc") {
+              NSPasteboard.general.clearContents()
+              NSPasteboard.general.setString(Self.signInCommand, forType: .string)
+            }
+            if isRefreshing { ProgressView().controlSize(.small) }
+            if let refreshMessage {
+              Text(refreshMessage)
+                .font(.caption)
+                .foregroundStyle(refreshSucceeded ? .green : .orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+          .controlSize(.small)
         }
       }
 
@@ -179,6 +212,23 @@ private struct AzureSettingsView: View {
     .task {
       orgs = discoverOrgs()
       azAvailable = await AzureAuth.shared.hasAzSession()
+    }
+  }
+
+  private func refreshToken() async {
+    isRefreshing = true
+    refreshMessage = nil
+    defer { isRefreshing = false }
+
+    let renewed = await AzureAuth.shared.refreshAzToken()
+    azAvailable = renewed
+    refreshSucceeded = renewed
+    if renewed {
+      refreshMessage = "Got a fresh token."
+    } else {
+      let reason = await AzureAuth.shared.lastAzFailure
+      refreshMessage = reason.map { "az couldn't issue a token — \($0)" }
+        ?? "az couldn't issue a token. Sign in again."
     }
   }
 

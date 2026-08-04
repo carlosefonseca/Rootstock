@@ -67,6 +67,27 @@ actor AzureAuth {
     return result.succeeded
   }
 
+  /// Drops the cached AAD token so the next request has to ask `az` for a new
+  /// one. Worth doing whenever a request comes back rejected: an access token
+  /// that hasn't reached its stated expiry can still stop being accepted (a
+  /// conditional-access re-evaluation, a tenant policy change), and without
+  /// this the app keeps presenting the dead one for the rest of its lifetime —
+  /// which is why signing in again in a terminal used to appear to do nothing.
+  func invalidateAzToken() {
+    azCache = nil
+  }
+
+  /// Asks `az` for a fresh token right now, ignoring the cache. This is the
+  /// cheap repair: `az account get-access-token` renews silently through MSAL
+  /// as long as the sign-in itself is still good, so it fixes a stale token
+  /// without any interaction. It's only when *that* fails that the sign-in has
+  /// genuinely lapsed and `az login` is unavoidable.
+  @discardableResult
+  func refreshAzToken() async -> Bool {
+    azCache = nil
+    return await azToken() != nil
+  }
+
   private func azToken() async -> String? {
     if let cached = azCache, cached.expiresAt > Date().addingTimeInterval(60) {
       return cached.token

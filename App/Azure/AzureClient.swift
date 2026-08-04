@@ -80,7 +80,7 @@ struct AzureClient {
 
   private func send<T: Decodable>(_ type: T.Type, method: String, org: String, path: String,
                                   query: [String: String], apiVersion: String?,
-                                  body: Data? = nil) async throws -> T {
+                                  body: Data? = nil, isRetry: Bool = false) async throws -> T {
     guard let token = await AzureAuth.shared.token(forOrg: org) else {
       throw AzureError.noCredential(org: org, detail: await AzureAuth.shared.lastAzFailure)
     }
@@ -100,7 +100,23 @@ struct AzureClient {
 
     let (data, response) = try await session.data(for: request)
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+    /// One silent repair attempt for a rejected AAD token: drop it and let `az`
+    /// mint a new one, which succeeds without interaction whenever the sign-in
+    /// itself is still valid. Returns nil when there's nothing to try — already
+    /// retried, or a PAT, which no amount of refreshing will fix. The retry's
+    /// own failure is swallowed on purpose so the caller sees the original
+    /// error, which describes the real problem better than "the retry also
+    /// failed" would.
+    func retryWithFreshToken() async -> T? {
+      guard !isRetry, case .bearer = token else { return nil }
+      await AzureAuth.shared.invalidateAzToken()
+      return try? await send(type, method: method, org: org, path: path, query: query,
+                             apiVersion: apiVersion, body: body, isRetry: true)
+    }
+
     guard (200..<300).contains(status) else {
+      if status == 401 || status == 403, let retried = await retryWithFreshToken() { return retried }
       // ADO often returns an error object with a "message" field.
       var message = ""
       if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -112,6 +128,7 @@ struct AzureClient {
     // than a clean 401 — surface that plainly instead of a raw JSON parsing
     // error that gives no hint of what actually went wrong.
     if let firstByte = data.first(where: { !$0.isWhitespaceASCII }), firstByte == UInt8(ascii: "<") {
+      if let retried = await retryWithFreshToken() { return retried }
       throw AzureError.expiredSession(org: org, detail: diagnosticSnippet(from: data))
     }
     do {

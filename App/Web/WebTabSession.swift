@@ -90,10 +90,10 @@ final class WebTabSession: NSObject {
     // like stuck 401s on specific asset requests from inside the app itself.
     webView.isInspectable = true
     urlObservation = webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
-      Task { @MainActor in self?.refreshState(from: webView) }
+      Task { @MainActor in self?.refreshState(from: webView, applyZoom: true) }
     }
     titleObservation = webView.observe(\.title, options: [.new]) { [weak self] webView, _ in
-      Task { @MainActor in self?.refreshState(from: webView) }
+      Task { @MainActor in self?.refreshState(from: webView, applyZoom: true) }
     }
     // Another tab on the same host zooming should resize this one too, rather
     // than the two drifting apart until one of them navigates again.
@@ -161,7 +161,11 @@ final class WebTabSession: NSObject {
   private func applyStoredZoom() {
     guard let host = currentHost else { return }
     let stored = AppSettings.webZoom(forHost: host) ?? 1.0
-    if abs(webView.pageZoom - stored) > 0.001 { webView.pageZoom = stored }
+    // Always assign — never skip on a matching read-back. WKWebView will report
+    // `pageZoom == stored` even when it accepted the property but hasn't applied
+    // it to the rendered content (the property was set before commit); guarding
+    // on that read is what let the page stay at 100% while the value said 0.8.
+    webView.pageZoom = stored
     pageZoom = stored
   }
 
@@ -242,6 +246,16 @@ extension WebTabSession: WKNavigationDelegate {
     Task { @MainActor in isLoading = true }
   }
 
+  /// Content has been committed to the frame — the earliest point at which
+  /// `pageZoom` reliably sticks. Setting it any earlier (e.g. off the `url` KVO
+  /// that fires during a provisional navigation) leaves the property holding
+  /// the stored value while WebKit renders the freshly-committed page at 100%.
+  /// The two then disagree: the page *looks* unzoomed, but the next Cmd+/Cmd-
+  /// steps off the hidden stored value (0.8 → 0.7) instead of off 100%.
+  nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    Task { @MainActor in applyStoredZoom() }
+  }
+
   nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     Task { @MainActor in refreshState(from: webView) }
   }
@@ -254,12 +268,19 @@ extension WebTabSession: WKNavigationDelegate {
     Task { @MainActor in refreshState(from: webView) }
   }
 
-  private func refreshState(from webView: WKWebView) {
+  private func refreshState(from webView: WKWebView, applyZoom: Bool = false) {
+    // Only touch `pageZoom` off the URL/title KVO once the page is past its
+    // provisional load — an SPA route change (history.pushState, which never
+    // fires didCommit/didFinish) can shift host mid-tab and needs its stored
+    // zoom re-applied, but a fresh navigation's early KVO must not, or the
+    // property and the rendered page desync. didCommit owns the initial apply.
+    if applyZoom && !isLoading {
+      applyStoredZoom()
+    }
     isLoading = false
     canGoBack = webView.canGoBack
     canGoForward = webView.canGoForward
     title = webView.title?.isEmpty == false ? webView.title : nil
-    applyStoredZoom()
     if let url = webView.url {
       currentURLString = url.absoluteString
       // `_MsalSignedInFps` is MSAL's one-shot, sessionStorage-scoped

@@ -108,8 +108,15 @@ struct MainTabBarView: View {
       // is selected: a view's shortcut beats the main menu's, so binding it
       // unconditionally would shadow the app-wide "Refresh All" everywhere
       // else.
-      if let session = selectedTab?.webSession {
-        Button("", action: { session.reload() })
+      //
+      // The action deliberately re-reads `selectedTab` at invocation time
+      // rather than capturing `session` at view-build time: if `session` were
+      // captured in the closure the button would keep a reference to the first
+      // web tab's session for as long as the `if let` condition stayed true
+      // (i.e. any web tab was selected), causing Cmd+R to always reload the
+      // first web tab instead of whichever one is currently active.
+      if selectedTab?.webSession != nil {
+        Button("", action: { selectedTab?.webSession?.reload() })
           .keyboardShortcut("r", modifiers: .command)
           .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
       }
@@ -176,6 +183,32 @@ struct MainTabBarView: View {
     }
   }
 
+  @ViewBuilder private var newTabMenuContent: some View {
+    Button("New Terminal Tab", systemImage: "terminal.fill") {
+      let tab = tabsStore.addTerminalTab(for: worktree, initialCommand: terminalInitCommand)
+      tabsStore.select(tab.id, for: worktree)
+    }
+    Button("New Web Tab", systemImage: "globe") {
+      let tab = tabsStore.addWebTab(for: worktree)
+      tabsStore.select(tab.id, for: worktree)
+    }
+    Button("Paste and Go", systemImage: "doc.on.clipboard") {
+      guard let pasted = pasteboardURL else { return }
+      let tab = tabsStore.addWebTab(for: worktree, urlString: pasted)
+      tabsStore.select(tab.id, for: worktree)
+    }
+
+    let links = quickLinks
+    if !links.isEmpty {
+      Divider()
+      ForEach(links) { link in
+        Button(link.title, systemImage: link.systemImage) {
+          QuickLinks.open(link, worktree: worktree, tabsStore: tabsStore)
+        }
+      }
+    }
+  }
+
   private var tabBar: some View {
     HStack(spacing: 4) {
       ScrollView(.horizontal, showsIndicators: false) {
@@ -195,30 +228,9 @@ struct MainTabBarView: View {
           }
         }
       }
+      .contextMenu { newTabMenuContent }
       Menu {
-        Button("New Terminal Tab", systemImage: "terminal.fill") {
-          let tab = tabsStore.addTerminalTab(for: worktree, initialCommand: terminalInitCommand)
-          tabsStore.select(tab.id, for: worktree)
-        }
-        Button("New Web Tab", systemImage: "globe") {
-          let tab = tabsStore.addWebTab(for: worktree)
-          tabsStore.select(tab.id, for: worktree)
-        }
-        Button("Paste and Go", systemImage: "doc.on.clipboard") {
-          guard let pasted = pasteboardURL else { return }
-          let tab = tabsStore.addWebTab(for: worktree, urlString: pasted)
-          tabsStore.select(tab.id, for: worktree)
-        }
-
-        let links = quickLinks
-        if !links.isEmpty {
-          Divider()
-          ForEach(links) { link in
-            Button(link.title, systemImage: link.systemImage) {
-              QuickLinks.open(link, worktree: worktree, tabsStore: tabsStore)
-            }
-          }
-        }
+        newTabMenuContent
       } label: {
         Image(systemName: "plus")
       }

@@ -309,10 +309,14 @@ private struct ReviewerChip: View {
       // a gray circle that reads as clutter without conveying anything.
       if reviewer.voteKind != .noVote {
         Image(systemName: icon)
-          .font(.system(size: 8, weight: .bold))
-          .foregroundStyle(color)
-          .padding(1)
-          .background(.background, in: .circle)
+          .font(.system(size: 7, weight: .black))
+          .foregroundStyle(.white)
+          .frame(width: 12, height: 12)
+          .background(color, in: .circle)
+          // A ring in the panel color keeps the badge from blending into
+          // whatever the avatar happens to have behind it.
+          .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+          .offset(x: 2, y: 2)
       }
     }
     .help("\(reviewer.displayName) — \(voteText)")

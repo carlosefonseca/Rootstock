@@ -18,7 +18,7 @@ struct ContentView: View {
         .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 380)
     } detail: {
       if let worktree = workspace.selectedWorktree {
-        WorktreeDetailView(worktree: worktree)
+        WorktreeDetailView(worktree: worktree, showTitle: columnVisibility != .detailOnly)
           .id(worktree.path)
       } else {
         EmptyDetailView()
@@ -52,6 +52,12 @@ struct ContentView: View {
                 showingSidebarPopover = false
               }
           }
+        }
+        // Replaces the default title/subtitle that macOS puts here once the
+        // sidebar is collapsed — with the sidebar gone, jumping between
+        // worktrees otherwise means reopening the popover above every time.
+        ToolbarItem(placement: .principal) {
+          RecentWorktreeTabs(worktrees: workspace.recentWorktrees)
         }
       }
       ToolbarItem {
@@ -136,6 +142,94 @@ struct PRWorkToolbarButton: View {
       .frame(width: 30, height: 22)
     }
     .help(badgeCount > 0 ? "Pull Request Work — \(badgeCount) need your attention" : "Pull Request Work")
+  }
+}
+
+/// The last few visited worktrees, laid out as a row of tabs. Stands in for
+/// the title/subtitle macOS shows in this spot once the sidebar collapses.
+/// `ViewThatFits` tries 5 tabs down to 2, so the row degrades gracefully as
+/// the window narrows instead of just clipping.
+private struct RecentWorktreeTabs: View {
+  @Environment(WorkspaceModel.self) private var workspace
+  var worktrees: [WorktreeInfo]
+
+  /// `worktrees` arrives most-recently-used-first, which would otherwise
+  /// reshuffle every tab's position each time one is clicked — not how tabs
+  /// behave. This tracks paths in the order they first appeared instead, so
+  /// existing tabs hold their place and only newly-recent worktrees join (at
+  /// the end) or fall off (once evicted from the underlying recents list).
+  @State private var order: [String] = []
+
+  private var orderedWorktrees: [WorktreeInfo] {
+    let byPath = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.path, $0) })
+    return order.compactMap { byPath[$0] }
+  }
+
+  private var candidateCounts: [Int] {
+    let maxCount = min(orderedWorktrees.count, 5)
+    let minCount = min(orderedWorktrees.count, 2)
+    guard maxCount > 0 else { return [] }
+    return Array(stride(from: maxCount, through: minCount, by: -1))
+  }
+
+  var body: some View {
+    Group {
+      if !candidateCounts.isEmpty {
+        let items = orderedWorktrees
+        ViewThatFits(in: .horizontal) {
+          ForEach(candidateCounts, id: \.self) { count in
+            row(Array(items.prefix(count)))
+          }
+        }
+      }
+    }
+    .onChange(of: worktrees, initial: true) { _, newValue in
+      let newPaths = Set(newValue.map(\.path))
+      order.removeAll { !newPaths.contains($0) }
+      for worktree in newValue where !order.contains(worktree.path) {
+        order.append(worktree.path)
+      }
+    }
+  }
+
+  private func row(_ items: [WorktreeInfo]) -> some View {
+    HStack(spacing: 4) {
+      ForEach(items) { worktree in
+        tab(worktree)
+      }
+    }
+  }
+
+  private func tab(_ worktree: WorktreeInfo) -> some View {
+    let isSelected = workspace.selectedPath == worktree.path
+    let cloneName = workspace.clone(forWorktree: worktree)?.displayName
+    // Not a `Button` — like `MainTabBarView`'s `TabChip`, a plain tap gesture
+    // avoids the native focus/hover background macOS still draws behind a
+    // `.plain`-styled button, which showed through as a stray rounded corner
+    // underneath this view's own selection background.
+    return HStack(spacing: 5) {
+      StatusDot(dot: workspace.statuses[worktree.path]?.dot ?? .clean)
+      VStack(alignment: .leading, spacing: 0) {
+        Text(worktree.folderName)
+          .lineLimit(1)
+        // The clone (repo) a worktree belongs to — same folder name can
+        // recur across different repos, so this disambiguates at a glance.
+        if let cloneName {
+          Text(cloneName)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+      }
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 4)
+    // Matches `MainTabBarView`'s `TabChip` — the same visual language as
+    // the app's other tab bar, just applied to worktrees instead of panes.
+    .background(isSelected ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
+    .contentShape(.rect)
+    .onTapGesture { workspace.selectedPath = worktree.path }
+    .help("\(worktree.folderName) — \(worktree.displayBranch)")
   }
 }
 

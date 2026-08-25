@@ -3,16 +3,18 @@ import SwiftUI
 struct WorktreeDetailView: View {
   @Environment(WorkspaceModel.self) private var workspace
   var worktree: WorktreeInfo
+  /// False once the sidebar collapses and `ContentView`'s recent-worktree
+  /// tabs take over that spot in the toolbar — the title/subtitle here would
+  /// otherwise just repeat what the tabs already say.
+  var showTitle = true
   @AppStorage("detail.showInspector") private var showInspector = true
 
   var body: some View {
-    MainTabBarView(worktree: worktree)
+    content
       .inspector(isPresented: $showInspector) {
         WorktreeInspector(worktree: worktree)
           .inspectorColumnWidth(min: 300, ideal: 340, max: 480)
       }
-      .navigationTitle(worktree.folderName)
-      .navigationSubtitle(worktree.displayBranch)
       .toolbar {
         // Only while the inspector is hidden — otherwise it's just repeating
         // the Status card sitting a few inches to the right.
@@ -44,6 +46,16 @@ struct WorktreeDetailView: View {
         }
         .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
       }
+  }
+
+  @ViewBuilder private var content: some View {
+    if showTitle {
+      MainTabBarView(worktree: worktree)
+        .navigationTitle(worktree.folderName)
+        .navigationSubtitle(worktree.displayBranch)
+    } else {
+      MainTabBarView(worktree: worktree)
+    }
   }
 }
 

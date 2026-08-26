@@ -11,6 +11,19 @@ struct ContentView: View {
   @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
   @State private var showingSidebarPopover = false
 
+  /// `workspace.recentWorktrees` arrives most-recently-used-first, which
+  /// would reshuffle every toolbar tab's position each time one is clicked —
+  /// not how tabs behave. This tracks paths in the order they first appeared
+  /// instead, so existing tabs hold their place and only newly-recent
+  /// worktrees join (at the end) or fall off (once evicted from the
+  /// underlying recents list).
+  @State private var recentTabOrder: [String] = []
+
+  private var orderedRecentWorktrees: [WorktreeInfo] {
+    let byPath = Dictionary(uniqueKeysWithValues: workspace.recentWorktrees.map { ($0.path, $0) })
+    return recentTabOrder.compactMap { byPath[$0] }
+  }
+
   var body: some View {
     @Bindable var workspace = workspace
     NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -22,6 +35,17 @@ struct ContentView: View {
           .id(worktree.path)
       } else {
         EmptyDetailView()
+      }
+    }
+    // On the window body rather than inside the toolbar item itself — a
+    // toolbar-hosted view's onChange(initial:) isn't reliably fired the
+    // first time NSToolbar creates it, so the tabs wouldn't appear until
+    // some other state change (e.g. picking a worktree) forced a rebuild.
+    .onChange(of: workspace.recentWorktrees, initial: true) { _, newValue in
+      let newPaths = Set(newValue.map(\.path))
+      recentTabOrder.removeAll { !newPaths.contains($0) }
+      for worktree in newValue where !recentTabOrder.contains(worktree.path) {
+        recentTabOrder.append(worktree.path)
       }
     }
     // Attached to the NavigationSplitView (window-level), not the sidebar
@@ -57,7 +81,7 @@ struct ContentView: View {
         // sidebar is collapsed — with the sidebar gone, jumping between
         // worktrees otherwise means reopening the popover above every time.
         ToolbarItem(placement: .principal) {
-          RecentWorktreeTabs(worktrees: workspace.recentWorktrees)
+          RecentWorktreeTabs(worktrees: orderedRecentWorktrees)
         }
       }
       ToolbarItem {
@@ -148,46 +172,25 @@ struct PRWorkToolbarButton: View {
 /// The last few visited worktrees, laid out as a row of tabs. Stands in for
 /// the title/subtitle macOS shows in this spot once the sidebar collapses.
 /// `ViewThatFits` tries 5 tabs down to 2, so the row degrades gracefully as
-/// the window narrows instead of just clipping.
+/// the window narrows instead of just clipping. `worktrees` is expected to
+/// already be in stable display order — see `ContentView.recentTabOrder`.
 private struct RecentWorktreeTabs: View {
   @Environment(WorkspaceModel.self) private var workspace
   var worktrees: [WorktreeInfo]
 
-  /// `worktrees` arrives most-recently-used-first, which would otherwise
-  /// reshuffle every tab's position each time one is clicked — not how tabs
-  /// behave. This tracks paths in the order they first appeared instead, so
-  /// existing tabs hold their place and only newly-recent worktrees join (at
-  /// the end) or fall off (once evicted from the underlying recents list).
-  @State private var order: [String] = []
-
-  private var orderedWorktrees: [WorktreeInfo] {
-    let byPath = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.path, $0) })
-    return order.compactMap { byPath[$0] }
-  }
-
   private var candidateCounts: [Int] {
-    let maxCount = min(orderedWorktrees.count, 5)
-    let minCount = min(orderedWorktrees.count, 2)
+    let maxCount = min(worktrees.count, 5)
+    let minCount = min(worktrees.count, 2)
     guard maxCount > 0 else { return [] }
     return Array(stride(from: maxCount, through: minCount, by: -1))
   }
 
   var body: some View {
-    Group {
-      if !candidateCounts.isEmpty {
-        let items = orderedWorktrees
-        ViewThatFits(in: .horizontal) {
-          ForEach(candidateCounts, id: \.self) { count in
-            row(Array(items.prefix(count)))
-          }
+    if !candidateCounts.isEmpty {
+      ViewThatFits(in: .horizontal) {
+        ForEach(candidateCounts, id: \.self) { count in
+          row(Array(worktrees.prefix(count)))
         }
-      }
-    }
-    .onChange(of: worktrees, initial: true) { _, newValue in
-      let newPaths = Set(newValue.map(\.path))
-      order.removeAll { !newPaths.contains($0) }
-      for worktree in newValue where !order.contains(worktree.path) {
-        order.append(worktree.path)
       }
     }
   }

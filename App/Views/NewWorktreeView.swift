@@ -35,8 +35,7 @@ struct NewWorktreeView: View {
   @State private var folderNameEdited = false
   @State private var folderName = ""
   @State private var baseBranch = "develop"
-  @State private var figmaURL = ""
-  @State private var slackURL = ""
+  @State private var bookmarks: [Bookmark] = []
   @State private var parentDir: URL?
   @State private var creating = false
   @State private var error: String?
@@ -180,8 +179,14 @@ struct NewWorktreeView: View {
         Section("Shared config") {
           BranchPickerField(title: "Base branch (PRJ_DEP)", selection: $baseBranch,
                             localBranches: localBranches, remoteBranches: remoteBranches)
-          TextField("Figma URL", text: $figmaURL, prompt: Text("optional"))
-          TextField("Slack channel URL", text: $slackURL, prompt: Text("optional"))
+        }
+        Section {
+          BookmarkListEditor(bookmarks: $bookmarks)
+        } header: {
+          Text("Bookmarks")
+        } footer: {
+          Text("Links shown in the inspector and new-tab menu. Slack URLs open in the native app.")
+            .font(.caption2)
         }
 
         if let error {
@@ -433,8 +438,7 @@ struct NewWorktreeView: View {
       config.dsBranch = config.dsBranch ?? "na"
       config.dsDep = config.dsDep ?? "na"
       if let parsedWorkItem { config.workItemURLs = [parsedWorkItem.canonical] }
-      if !figmaURL.isEmpty { config.figmaURL = figmaURL }
-      if !slackURL.isEmpty { config.slackChannelURL = slackURL }
+      config.bookmarks = bookmarks.filter { !$0.title.isEmpty && !$0.urlString.isEmpty }
       try? config.save(worktree: path, branch: branchName)
 
       await workspace.refreshClone(commonDir: clone.commonDir, rootURL: clone.rootURL)

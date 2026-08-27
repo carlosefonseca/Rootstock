@@ -43,9 +43,9 @@ final class WorktreeTabsStore {
   }
 
   /// Restores the worktree's tabs from a previous session if any were saved;
-  /// otherwise builds the starting set: a terminal, plus a work-item tab and a
-  /// Figma tab when the branch's shared config already has them set. Only ever
-  /// runs once per worktree per launch.
+  /// otherwise builds the starting set: a terminal, plus a work-item tab and
+  /// web-tab bookmarks when the branch's shared config already has them set.
+  /// Only ever runs once per worktree per launch.
   func ensureDefaultTabs(for worktree: WorktreeInfo, initialCommand: String? = nil) {
     initialCommands[worktree.path] = (initialCommand?.isEmpty == false) ? initialCommand : nil
     guard tabsByWorktree[worktree.path] == nil else { return }
@@ -67,8 +67,9 @@ final class WorktreeTabsStore {
         tabs.append(makeWebTab(title: "Work Item #\(wiURL.id)", systemImage: "checklist",
                                urlString: wiURL.canonical, worktree: worktree))
       }
-      if let figma = config.figmaURL, !figma.isEmpty {
-        tabs.append(makeWebTab(title: "Figma", systemImage: "paintbrush.pointed", urlString: figma, worktree: worktree))
+      for bookmark in config.bookmarks where !bookmark.urlString.isEmpty && !bookmark.prefersNativeApp {
+        tabs.append(makeWebTab(title: bookmark.title, systemImage: bookmark.systemImage,
+                               urlString: bookmark.urlString, worktree: worktree))
       }
     }
 

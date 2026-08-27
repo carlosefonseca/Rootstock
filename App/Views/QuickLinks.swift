@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// One of a worktree's configured destinations — the PR, its work items, Figma,
-/// Slack. Resolved from the branch's shared config plus the cached PR lookup.
+/// One of a worktree's configured destinations — the PR, its work items, or a
+/// bookmark. Resolved from the branch's shared config plus the cached PR lookup.
 struct QuickLink: Identifiable, Hashable {
   var id: String { title }
   var title: String
   var systemImage: String
   var urlString: String
-  /// Slack opens via its native app rather than an in-app web tab.
+  /// Slack channels open via the native app rather than an in-app web tab.
   var prefersNativeApp = false
 }
 
@@ -28,18 +28,15 @@ enum QuickLinks {
       links.append(QuickLink(title: "Work Item #\(wiURL.id)", systemImage: "checklist",
                              urlString: wiURL.canonical))
     }
-    if let figma = config.figmaURL, !figma.isEmpty {
-      links.append(QuickLink(title: "Figma", systemImage: "paintbrush.pointed", urlString: figma))
-    }
-    if let slack = config.slackChannelURL, !slack.isEmpty {
-      links.append(QuickLink(title: "Slack", systemImage: "bubble.left.and.bubble.right",
-                             urlString: slack, prefersNativeApp: true))
+    for bookmark in config.bookmarks where !bookmark.urlString.isEmpty {
+      links.append(QuickLink(title: bookmark.title, systemImage: bookmark.systemImage,
+                             urlString: bookmark.urlString, prefersNativeApp: bookmark.prefersNativeApp))
     }
     return links
   }
 
-  /// Opens a link the way its kind wants to be opened — Slack in its app,
-  /// everything else in a tab (or the system browser with Cmd/Option held,
+  /// Opens a link the way its kind wants to be opened — Slack in its native
+  /// app, everything else in a tab (or the system browser with Cmd/Option held,
   /// per `WebLinkOpener`).
   @MainActor
   static func open(_ link: QuickLink, worktree: WorktreeInfo, tabsStore: WorktreeTabsStore) {

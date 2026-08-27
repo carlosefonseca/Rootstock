@@ -11,8 +11,7 @@ struct SharedConfigEditor: View {
   @State private var baseBranch = ""
   @State private var workItemURLs: [String] = []
   @State private var additionalPRURLs: [String] = []
-  @State private var figmaURL = ""
-  @State private var slackURL = ""
+  @State private var bookmarks: [Bookmark] = []
   @State private var loaded = BranchConfig()
   @State private var localBranches: [String] = []
   @State private var remoteBranches: [String] = []
@@ -23,8 +22,7 @@ struct SharedConfigEditor: View {
     baseBranch != (loaded.prjDep ?? "") ||
     workItemURLs.filter({ !$0.isEmpty }) != loaded.workItemURLs ||
     additionalPRURLs.filter({ !$0.isEmpty }) != loaded.additionalPRURLs ||
-    figmaURL != (loaded.figmaURL ?? "") ||
-    slackURL != (loaded.slackChannelURL ?? "")
+    bookmarks != loaded.bookmarks
   }
 
   var body: some View {
@@ -56,13 +54,13 @@ struct SharedConfigEditor: View {
           Text("For work split across several PRs — the one matching this branch's name is already shown automatically.")
             .font(.caption2)
         }
-        Section("Links") {
-          LinkField(title: "Figma", text: $figmaURL, prompt: "https://figma.com/…") {
-            AppOpener.open(figmaURL)
-          }
-          LinkField(title: "Slack channel", text: $slackURL, prompt: "https://…slack.com/archives/…") {
-            AppOpener.openSlack(slackURL)
-          }
+        Section {
+          BookmarkListEditor(bookmarks: $bookmarks)
+        } header: {
+          Text("Bookmarks")
+        } footer: {
+          Text("Links shown in the inspector and new-tab menu. Slack URLs open in the native app.")
+            .font(.caption2)
         }
         if let saveError {
           Label(saveError, systemImage: "exclamationmark.triangle")
@@ -93,8 +91,7 @@ struct SharedConfigEditor: View {
     baseBranch = loaded.prjDep ?? ""
     workItemURLs = loaded.workItemURLs
     additionalPRURLs = loaded.additionalPRURLs
-    figmaURL = loaded.figmaURL ?? ""
-    slackURL = loaded.slackChannelURL ?? ""
+    bookmarks = loaded.bookmarks
   }
 
   private func loadBranches() async {
@@ -112,8 +109,7 @@ struct SharedConfigEditor: View {
       config.prjDep = baseBranch.isEmpty ? nil : baseBranch
       config.workItemURLs = workItemURLs.filter { !$0.isEmpty }
       config.additionalPRURLs = additionalPRURLs.filter { !$0.isEmpty }
-      config.figmaURL = figmaURL.isEmpty ? nil : figmaURL
-      config.slackChannelURL = slackURL.isEmpty ? nil : slackURL
+      config.bookmarks = bookmarks.filter { !$0.title.isEmpty && !$0.urlString.isEmpty }
       try config.save(worktree: worktree.url, branch: branch)
       Task { await workspace.reloadStatus(for: worktree) } // base branch may have changed
       NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
@@ -174,22 +170,52 @@ private struct PullRequestURLListEditor: View {
   }
 }
 
-private struct LinkField: View {
-  var title: String
-  @Binding var text: String
-  var prompt: String
-  var open: () -> Void
+struct BookmarkListEditor: View {
+  @Binding var bookmarks: [Bookmark]
+  @FocusState private var focusedField: BookmarkField?
+
+  enum BookmarkField: Hashable {
+    case title(UUID)
+    case url(UUID)
+  }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      Text(title).font(.caption).foregroundStyle(.secondary)
-      HStack {
-        TextField(title, text: $text, prompt: Text(prompt))
-          .labelsHidden()
-        Button("Open \(title)", systemImage: "arrow.up.right.square") { open() }
-          .labelStyle(.iconOnly)
-          .disabled(text.isEmpty)
+    VStack(alignment: .leading, spacing: 10) {
+      ForEach($bookmarks) { $bookmark in
+        HStack(alignment: .top, spacing: 8) {
+          VStack(alignment: .leading, spacing: 4) {
+            TextField("Title", text: $bookmark.title, prompt: Text("e.g. Figma"))
+              .labelsHidden()
+              .focused($focusedField, equals: .title(bookmark.id))
+            TextField("URL", text: $bookmark.urlString, prompt: Text("https://…"))
+              .labelsHidden()
+              .focused($focusedField, equals: .url(bookmark.id))
+          }
+          HStack(spacing: 4) {
+            Button("Open", systemImage: "arrow.up.right.square") {
+              if bookmark.prefersNativeApp {
+                AppOpener.openSlack(bookmark.urlString)
+              } else {
+                AppOpener.open(bookmark.urlString)
+              }
+            }
+            .labelStyle(.iconOnly)
+            .disabled(bookmark.urlString.isEmpty)
+            Button("Remove", systemImage: "minus.circle") {
+              bookmarks.removeAll { $0.id == bookmark.id }
+            }
+            .labelStyle(.iconOnly)
+            .foregroundStyle(.secondary)
+          }
+          .padding(.top, 2)
+        }
       }
+      Button("Add Bookmark", systemImage: "plus.circle") {
+        let b = Bookmark(title: "", urlString: "")
+        bookmarks.append(b)
+        focusedField = .title(b.id)
+      }
+      .labelStyle(.titleAndIcon)
     }
   }
 }

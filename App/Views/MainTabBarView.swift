@@ -18,6 +18,7 @@ struct MainTabBarView: View {
   /// The tab currently being dragged for reordering — tracked so the drop
   /// delegate can tell which chip is moving as it hovers over neighbors.
   @State private var draggedTabID: MainTab.ID?
+  @State private var pendingBookmark: PendingBookmark?
 
   /// The clone's local-only terminal init command — typed into every new
   /// terminal tab's shell right after it starts.
@@ -53,6 +54,15 @@ struct MainTabBarView: View {
     }
     .task(id: worktree.path) {
       tabsStore.ensureDefaultTabs(for: worktree, initialCommand: terminalInitCommand)
+    }
+    .sheet(item: $pendingBookmark) { pending in
+      AddBookmarkSheet(pending: pending) { title in
+        guard let branch = worktree.branch else { return }
+        var config = BranchConfig.load(worktree: worktree.url, branch: branch)
+        config.bookmarks.append(Bookmark(title: title, urlString: pending.urlString))
+        try? config.save(worktree: worktree.url, branch: branch)
+        NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
+      }
     }
     .background {
       // Invisible buttons rather than a `.commands` menu item: those are
@@ -146,6 +156,16 @@ struct MainTabBarView: View {
       if let session = tab.webSession, abs(session.pageZoom - 1.0) > 0.001 {
         Button("Reset Zoom (\(Int((session.pageZoom * 100).rounded()))%)", systemImage: "arrow.counterclockwise") {
           session.zoomReset()
+        }
+      }
+      if let branch = worktree.branch {
+        let config = BranchConfig.load(worktree: worktree.url, branch: branch)
+        if !config.bookmarks.contains(where: { $0.urlString == urlString }) {
+          Button("Add Bookmark", systemImage: "bookmark") {
+            pendingBookmark = PendingBookmark(
+              urlString: urlString,
+              proposedTitle: tab.webSession?.title ?? tab.title)
+          }
         }
       }
       Divider()
@@ -262,6 +282,49 @@ struct MainTabBarView: View {
     } else {
       ContentUnavailableView("No Tabs", systemImage: "square.on.square")
     }
+  }
+}
+
+private struct PendingBookmark: Identifiable {
+  let id = UUID()
+  let urlString: String
+  var proposedTitle: String
+}
+
+private struct AddBookmarkSheet: View {
+  var pending: PendingBookmark
+  var onSave: (String) -> Void
+  @Environment(\.dismiss) private var dismiss
+  @State private var title: String
+
+  init(pending: PendingBookmark, onSave: @escaping (String) -> Void) {
+    self.pending = pending
+    self.onSave = onSave
+    _title = State(initialValue: pending.proposedTitle)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Add Bookmark").font(.title3.weight(.semibold))
+      TextField("Name", text: $title)
+        .textFieldStyle(.roundedBorder)
+      Text(pending.urlString)
+        .font(.caption).foregroundStyle(.secondary)
+        .lineLimit(1).truncationMode(.middle)
+      HStack {
+        Spacer()
+        Button("Cancel") { dismiss() }
+        Button("Add") {
+          let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+          onSave(name.isEmpty ? pending.urlString : name)
+          dismiss()
+        }
+        .keyboardShortcut(.defaultAction)
+        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+    }
+    .padding(20)
+    .frame(width: 380)
   }
 }
 

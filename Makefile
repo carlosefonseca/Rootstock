@@ -13,6 +13,9 @@
 # sparkle:version (this number), not the marketing version string, so it told
 # users on 1.0.0 they were already up to date. 1000 gives enormous headroom
 # against that ever happening again unnoticed.
+SHELL := /bin/zsh
+.SHELLFLAGS := -o pipefail -c
+
 REPO := carlosefonseca/Rootstock
 COMMIT_COUNT := $(shell git rev-list --count HEAD)
 BUILD_NUMBER := $(shell echo $$(( $(COMMIT_COUNT) + 1000 )))

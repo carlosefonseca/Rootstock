@@ -9,14 +9,14 @@ enum AzureError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .noCredential(let org, let detail):
-      let base = "No credential for \(org). Add a PAT in Settings, or sign in with `az login`."
+      let base = "No credential for \(org). Add a PAT in Settings, or sign in with `az login --allow-no-subscriptions`."
       return detail.map { "\(base) (\($0))" } ?? base
     case .http(let status, let message):
       return "Azure DevOps returned \(status)\(message.isEmpty ? "" : ": \(message)")"
     case .decoding(let detail):
       return "Couldn't read the Azure DevOps response (\(detail))."
     case .expiredSession(let org, let detail):
-      let base = "Your Azure DevOps session for \(org) looks expired — sign in again with `az login`, or check the PAT in Settings."
+      let base = "Your Azure DevOps session for \(org) looks expired — sign in again with `az login --allow-no-subscriptions`, or check the PAT in Settings."
       return detail.map { "\(base) (\($0))" } ?? base
     }
   }

@@ -237,7 +237,12 @@ private struct AzureSettingsView: View {
     _ = await ShellRunner.run("az logout")
     let result = await ShellRunner.run("az login --allow-no-subscriptions")
 
-    let renewed = result.succeeded && (await AzureAuth.shared.refreshAzToken())
+    let renewed: Bool
+    if result.succeeded {
+      renewed = await AzureAuth.shared.refreshAzToken()
+    } else {
+      renewed = false
+    }
     azAvailable = renewed
     refreshSucceeded = renewed
     if renewed {

@@ -146,9 +146,7 @@ private struct AzureSettingsView: View {
   @State private var refreshMessage: String?
   @State private var refreshSucceeded = true
 
-  /// What to run when refreshing isn't enough. Kept as one string so the label
-  /// and the thing that lands on the clipboard can't disagree.
-  private static let signInCommand = "az logout && az login"
+  private static let signInCommand = "az logout && az login --allow-no-subscriptions"
 
   var body: some View {
     Form {
@@ -163,16 +161,14 @@ private struct AzureSettingsView: View {
           }
         }
 
-        // Spelled out because the two repairs are not interchangeable and the
-        // difference is easy to forget mid-annoyance: refreshing renews the
-        // token silently and fixes most failures, and only when it can't does
-        // the sign-in itself need redoing.
         VStack(alignment: .leading, spacing: 6) {
-          Text("If Azure DevOps requests start failing, refresh the token first — that renews it through `az` without any sign-in. When the refresh fails too, the sign-in has lapsed: run \(Text("`\(Self.signInCommand)`").font(.caption.monospaced())) in a terminal, then refresh again.")
+          Text("If requests fail, refresh the token first. If the refresh fails too, the sign-in has lapsed: click Sign In to re-authenticate through your browser, then refresh again.")
             .font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
           HStack(spacing: 8) {
             Button("Refresh Token") { Task { await refreshToken() } }
+              .disabled(isRefreshing)
+            Button("Sign In") { Task { await signIn() } }
               .disabled(isRefreshing)
             Button("Copy Sign-In Command", systemImage: "doc.on.doc") {
               NSPasteboard.general.clearContents()
@@ -229,6 +225,26 @@ private struct AzureSettingsView: View {
       let reason = await AzureAuth.shared.lastAzFailure
       refreshMessage = reason.map { "az couldn't issue a token — \($0)" }
         ?? "az couldn't issue a token. Sign in again."
+    }
+  }
+
+  private func signIn() async {
+    isRefreshing = true
+    refreshMessage = "Opening browser for sign-in…"
+    refreshSucceeded = true
+    defer { isRefreshing = false }
+
+    _ = await ShellRunner.run("az logout")
+    let result = await ShellRunner.run("az login --allow-no-subscriptions")
+
+    let renewed = result.succeeded && (await AzureAuth.shared.refreshAzToken())
+    azAvailable = renewed
+    refreshSucceeded = renewed
+    if renewed {
+      refreshMessage = "Signed in."
+    } else {
+      let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+      refreshMessage = stderr.isEmpty ? "Sign-in failed." : stderr
     }
   }
 

@@ -81,7 +81,7 @@ actor AzureAuth {
   /// cheap repair: `az account get-access-token` renews silently through MSAL
   /// as long as the sign-in itself is still good, so it fixes a stale token
   /// without any interaction. It's only when *that* fails that the sign-in has
-  /// genuinely lapsed and `az login` is unavoidable.
+  /// genuinely lapsed and `az login --allow-no-subscriptions` is unavoidable.
   @discardableResult
   func refreshAzToken() async -> Bool {
     azCache = nil

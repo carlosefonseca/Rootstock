@@ -120,7 +120,7 @@ struct NewWorktreeView: View {
   }
 
   private var effectiveFolderName: String {
-    source == .newBranch && folderNameEdited ? folderName : derivedFolderName
+    folderNameEdited ? folderName : derivedFolderName
   }
 
   private var targetPath: URL? {
@@ -208,6 +208,7 @@ struct NewWorktreeView: View {
     .frame(width: 520, height: 640)
     .onAppear { if selectedCloneID == nil { selectedCloneID = workspace.clones.first?.commonDir } }
     .onChange(of: selectedCloneID) { reloadBranches(); loadPullRequests() }
+    .onChange(of: existingBranch) { folderNameEdited = false }
     .onChange(of: source) { reloadBranches(); loadPullRequests() }
     .onChange(of: selectedPRId) {
       guard let sourceBranch = selectedPR?.sourceBranch else { return }
@@ -223,10 +224,7 @@ struct NewWorktreeView: View {
         .font(.body.monospaced())
       BranchPickerField(title: "Base branch", selection: $baseBranch,
                         localBranches: localBranches, remoteBranches: remoteBranches)
-      TextField("Folder name", text: Binding(
-        get: { effectiveFolderName },
-        set: { folderName = sanitizeFolderInput($0); folderNameEdited = true }))
-        .font(.body.monospaced())
+      folderNameField
       locationRow
     }
   }
@@ -244,8 +242,16 @@ struct NewWorktreeView: View {
              : "Selected: \(existingBranch)")
           .font(.caption).foregroundStyle(.secondary)
       }
+      folderNameField
       locationRow
     }
+  }
+
+  @ViewBuilder private var folderNameField: some View {
+    TextField("Folder name", text: Binding(
+      get: { effectiveFolderName },
+      set: { folderName = sanitizeFolderInput($0); folderNameEdited = true }))
+      .font(.body.monospaced())
   }
 
   private var filteredPRs: [ADOPullRequest] {
@@ -307,6 +313,7 @@ struct NewWorktreeView: View {
                ? "Creates local branch \(existingLocalName) tracking \(existingBranch)."
                : "Checks out existing local branch \(existingBranch) (not currently in a worktree).")
             .font(.caption).foregroundStyle(.secondary)
+          folderNameField
           locationRow
         }
       }

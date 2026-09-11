@@ -31,12 +31,18 @@ struct ContentView: View {
       SidebarView(editingTerminalCommandFor: $editingTerminalCommandFor)
         .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 380)
     } detail: {
-      if let worktree = workspace.selectedWorktree {
-        WorktreeDetailView(worktree: worktree, showTitle: columnVisibility != .detailOnly)
-          .id(worktree.path)
-      } else {
-        EmptyDetailView()
+      Group {
+        if let worktree = workspace.selectedWorktree {
+          WorktreeDetailView(worktree: worktree, showTitle: columnVisibility != .detailOnly)
+            .id(worktree.path)
+        } else {
+          EmptyDetailView()
+        }
       }
+      // Explicit min width prevents the NSSplitView-backed inspector inside
+      // WorktreeDetailView from cycling NavigationSplitView's constraint
+      // passes on macOS 27 — without this the app crashes on launch.
+      .navigationSplitViewColumnWidth(min: 560, ideal: 600)
     }
     // On the window body rather than inside the toolbar item itself — a
     // toolbar-hosted view's onChange(initial:) isn't reliably fired the

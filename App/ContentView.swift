@@ -6,6 +6,7 @@ struct ContentView: View {
   @Environment(CrossRepoPRWorkModel.self) private var prWorkModel
   @Environment(\.modelContext) private var context
   @Environment(\.openWindow) private var openWindow
+  @Environment(\.scenePhase) private var scenePhase
   @State private var showingNewWorktree = false
   @State private var editingTerminalCommandFor: TrackedClone?
   @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
@@ -106,6 +107,22 @@ struct ContentView: View {
       }
     }
     .task { workspace.configure(context) }
+    // A quick git-status refresh of just the newly-selected worktree — cheap
+    // enough to run on every selection change, so ahead/behind and dirty state
+    // reflect any commits/changes made outside the app since it was last shown.
+    // (Azure reloads on selection already, via AzureSection's `.task(id:)`.)
+    .onChange(of: workspace.selectedPath) {
+      guard let worktree = workspace.selectedWorktree else { return }
+      Task { await workspace.reloadStatus(for: worktree) }
+    }
+    // On returning to the foreground, refresh the selected worktree (git status
+    // + Azure) so it isn't stale after time spent in another app. Scoped to the
+    // selected worktree to stay lightweight; ⌘R still refreshes everything.
+    .onChange(of: scenePhase) { _, phase in
+      guard phase == .active, let worktree = workspace.selectedWorktree else { return }
+      Task { await workspace.reloadStatus(for: worktree) }
+      NotificationCenter.default.post(name: .worktreeRefreshRequested, object: nil)
+    }
     // Keeps the toolbar badge populated even if the user never opens the
     // PR-work window. One-shot rather than keyed to the clones list: that
     // list mutates several times in quick succession while clones first load

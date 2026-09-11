@@ -156,6 +156,11 @@ final class WorkspaceModel {
     try? context?.save()
   }
 
+  func setDefaultBaseBranch(_ branch: String?, for clone: TrackedClone) {
+    clone.defaultBaseBranch = branch
+    try? context?.save()
+  }
+
   func removeClone(_ clone: TrackedClone) {
     guard let context else { return }
     worktrees[clone.commonDir] = nil

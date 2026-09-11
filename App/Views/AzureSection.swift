@@ -34,6 +34,9 @@ struct AzureSection: View {
     .onReceive(NotificationCenter.default.publisher(for: .branchConfigChanged)) { _ in
       startReload()
     }
+    .onReceive(NotificationCenter.default.publisher(for: .worktreeRefreshRequested)) { _ in
+      startReload()
+    }
     .onDisappear { reloadTask?.cancel() }
   }
 

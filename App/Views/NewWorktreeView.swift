@@ -50,6 +50,12 @@ struct NewWorktreeView: View {
   /// The numeric work item id from the loaded item — the second half of the
   /// derived `<prefix>/<id>` branch in Work Item mode.
   @State private var fetchedWorkItemID: String?
+  /// A short slug summarizing the work item title, produced by `fm` when it's
+  /// available. Appended to the derived branch as `<prefix>/<id>-<slug>`.
+  @State private var fetchedSlug: String?
+  /// True while `fm` is generating the slug, so the UI can show progress without
+  /// blocking the rest of the fetch.
+  @State private var generatingSlug = false
 
   // Existing-branch state.
   @State private var existingBranch = ""
@@ -96,11 +102,14 @@ struct NewWorktreeView: View {
   }
 
   /// The branch derived in Work Item mode: `<prefix>/<id>` (e.g. `bug/12345`),
-  /// where the prefix comes from the loaded work item's type. Falls back to the
-  /// id parsed from the URL before the item is loaded.
+  /// or `<prefix>/<id>-<slug>` once `fm` has summarized the title. Falls back to
+  /// the id parsed from the URL before the item is loaded.
   private var derivedWorkItemBranch: String {
     let prefix = fetchedBranchPrefix ?? "feature"
     guard let id = fetchedWorkItemID ?? parsedWorkItem?.id else { return "" }
+    if let fetchedSlug, !fetchedSlug.isEmpty {
+      return "\(prefix)/\(id)-\(fetchedSlug)"
+    }
     return "\(prefix)/\(id)"
   }
 
@@ -311,6 +320,12 @@ struct NewWorktreeView: View {
         get: { effectiveBranch },
         set: { branch = sanitizeBranchInput($0); branchEdited = true }))
         .font(.body.monospaced())
+      if generatingSlug {
+        HStack(spacing: 6) {
+          ProgressView().controlSize(.small)
+          Text("Generating slug with fm…").font(.caption).foregroundStyle(.secondary)
+        }
+      }
       BranchPickerField(title: "Base branch", selection: baseBranchBinding,
                         localBranches: localBranches, remoteBranches: remoteBranches)
       folderNameField
@@ -436,6 +451,7 @@ struct NewWorktreeView: View {
     fetchedTitle = nil
     fetchedBranchPrefix = nil
     fetchedWorkItemID = nil
+    fetchedSlug = nil
     existingBranch = ""
     // Always fetched, not just for the existing-branch/new-branch tabs: the
     // Shared Config section's base-branch picker needs this regardless of
@@ -490,16 +506,38 @@ struct NewWorktreeView: View {
         if source == .workItem {
           fetchedWorkItemID = String(item.id)
           fetchedBranchPrefix = item.type.map { branchPrefix(for: $0) } ?? "feature"
+          fetchedSlug = nil
           // Reset any prior manual edit so the freshly loaded item drives the
           // derived `<prefix>/<id>` branch (still editable afterwards).
           branchEdited = false
           folderNameEdited = false
+          // Ask `fm` (if installed) to summarize the title into a short slug,
+          // upgrading the branch to `<prefix>/<id>-<slug>` when it returns. Kept
+          // separate from the Azure fetch so the branch is usable immediately
+          // and a slow/absent `fm` never blocks creation.
+          if let title = item.title { generateSlug(from: title) }
         }
       } catch {
         let scope = workItem.project.map { "\(workItem.org)/\($0)" } ?? workItem.org
         fetchError = "\(error.localizedDescription) (queried \(scope))"
       }
       fetching = false
+    }
+  }
+
+  /// Generates a short slug from the work item title via `fm`, then folds it
+  /// into the derived branch — unless the user has since edited the branch by
+  /// hand, in which case their value is left untouched.
+  private func generateSlug(from title: String) {
+    generatingSlug = true
+    Task {
+      let slug = await SlugGenerator.slug(for: title)
+      // Only apply if still relevant: same work item mode and no manual edit.
+      if source == .workItem, !branchEdited {
+        fetchedSlug = slug
+        folderNameEdited = false
+      }
+      generatingSlug = false
     }
   }
 

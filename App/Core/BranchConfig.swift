@@ -5,6 +5,11 @@ extension Notification.Name {
   /// repo-wide `.dcdp/config.toml` — so `AzureSection` knows to re-fetch instead
   /// of continuing to show whatever it resolved before the edit.
   static let branchConfigChanged = Notification.Name("rootstock.branchConfigChanged")
+
+  /// Posted when a lightweight refresh of the selected worktree is wanted —
+  /// currently on app foreground — so `AzureSection` re-fetches its Azure data
+  /// alongside the git-status reload `ContentView` performs directly.
+  static let worktreeRefreshRequested = Notification.Name("rootstock.worktreeRefreshRequested")
 }
 
 /// A per-branch bookmark stored in the shared config. Format on disk: `BOOKMARK_N="title|url"`.

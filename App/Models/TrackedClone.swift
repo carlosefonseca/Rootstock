@@ -16,6 +16,9 @@ final class TrackedClone {
   /// `nvm use` or a workspace-specific env setup. Local to this machine only,
   /// never written into the repo.
   var terminalInitCommand: String?
+  /// Pre-filled as the base branch in the "New Worktree" dialog for this clone.
+  /// Local to this machine only — falls back to `develop` when unset.
+  var defaultBaseBranch: String?
 
   init(commonDir: String, displayName: String, rootPath: String, remoteURL: String?) {
     self.commonDir = commonDir

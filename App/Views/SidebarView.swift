@@ -10,6 +10,7 @@ struct SidebarView: View {
   @State private var worktreeToDelete: WorktreeInfo?
   @State private var deleteErrorWorktree: WorktreeInfo?
   @State private var deleteErrorMessage: String?
+  @State private var editingBaseBranchFor: TrackedClone?
 
   var body: some View {
     @Bindable var workspace = workspace
@@ -44,6 +45,7 @@ struct SidebarView: View {
               Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([clone.rootURL]) }
               Button("Refresh") { Task { await workspace.refreshClone(commonDir: clone.commonDir, rootURL: clone.rootURL) } }
               Button("Terminal Command…") { editingTerminalCommandFor = clone }
+              Button("Base Branch…") { editingBaseBranchFor = clone }
               Divider()
               Button("Stop Tracking", role: .destructive) { workspace.removeClone(clone) }
             }
@@ -78,6 +80,11 @@ struct SidebarView: View {
       Button("Cancel", role: .cancel) {}
     } message: {
       Text(deleteErrorMessage ?? "")
+    }
+    .sheet(item: $editingBaseBranchFor) { clone in
+      BaseBranchEditor(clone: clone) { branch in
+        workspace.setDefaultBaseBranch(branch, for: clone)
+      }
     }
   }
 
@@ -166,6 +173,48 @@ struct TerminalCommandEditor: View {
     .padding(20)
     .frame(width: 400)
     .onAppear { command = clone.terminalInitCommand ?? "" }
+  }
+}
+
+struct BaseBranchEditor: View {
+  @Environment(\.dismiss) private var dismiss
+  var clone: TrackedClone
+  var onSave: (String?) -> Void
+
+  @State private var branch = ""
+  @State private var localBranches: [String] = []
+  @State private var remoteBranches: [String] = []
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Base Branch").font(.title3.weight(.semibold))
+      Text("Pre-filled as the base branch when creating a new worktree in \(clone.displayName). Stored on this Mac only — never written to the repo. Defaults to develop when unset.")
+        .font(.caption).foregroundStyle(.secondary)
+      Form {
+        BranchPickerField(title: "Base branch", selection: $branch,
+                          localBranches: localBranches, remoteBranches: remoteBranches)
+      }
+      .formStyle(.grouped)
+      HStack {
+        Spacer()
+        Button("Cancel") { dismiss() }
+        Button("Save") {
+          let trimmed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+          onSave(trimmed.isEmpty ? nil : trimmed)
+          dismiss()
+        }
+        .keyboardShortcut(.defaultAction)
+      }
+    }
+    .padding(20)
+    .frame(width: 440)
+    .onAppear { branch = clone.defaultBaseBranch ?? "" }
+    .task {
+      let result = await Git.branches(in: clone.rootURL)
+      localBranches = result.local
+      let localSet = Set(result.local)
+      remoteBranches = result.remote.filter { !localSet.contains(String($0.dropFirst("origin/".count))) }
+    }
   }
 }
 

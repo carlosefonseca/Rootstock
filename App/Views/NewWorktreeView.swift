@@ -8,12 +8,13 @@ struct NewWorktreeView: View {
   @Environment(\.dismiss) private var dismiss
 
   enum Source: String, CaseIterable, Identifiable {
-    case newBranch, existingBranch, pullRequest
+    case newBranch, existingBranch, workItem, pullRequest
     var id: String { rawValue }
     var label: String {
       switch self {
       case .newBranch: return "New branch"
       case .existingBranch: return "Existing branch"
+      case .workItem: return "Work item"
       case .pullRequest: return "Pull request"
       }
     }
@@ -35,6 +36,7 @@ struct NewWorktreeView: View {
   @State private var folderNameEdited = false
   @State private var folderName = ""
   @State private var baseBranch = "develop"
+  @State private var baseBranchEdited = false
   @State private var bookmarks: [Bookmark] = []
   @State private var parentDir: URL?
   @State private var creating = false
@@ -42,6 +44,12 @@ struct NewWorktreeView: View {
   @State private var fetching = false
   @State private var fetchError: String?
   @State private var fetchedTitle: String?
+  /// The type prefix (`feature`/`bug`/`chore`) derived from the fetched work
+  /// item — drives the branch prefix in Work Item mode.
+  @State private var fetchedBranchPrefix: String?
+  /// The numeric work item id from the loaded item — the second half of the
+  /// derived `<prefix>/<id>` branch in Work Item mode.
+  @State private var fetchedWorkItemID: String?
 
   // Existing-branch state.
   @State private var existingBranch = ""
@@ -87,6 +95,26 @@ struct NewWorktreeView: View {
     return "\(type.rawValue)/\(idPart)\(slug)"
   }
 
+  /// The branch derived in Work Item mode: `<prefix>/<id>` (e.g. `bug/12345`),
+  /// where the prefix comes from the loaded work item's type. Falls back to the
+  /// id parsed from the URL before the item is loaded.
+  private var derivedWorkItemBranch: String {
+    let prefix = fetchedBranchPrefix ?? "feature"
+    guard let id = fetchedWorkItemID ?? parsedWorkItem?.id else { return "" }
+    return "\(prefix)/\(id)"
+  }
+
+  /// Maps an Azure DevOps work item type to a branch prefix. Bugs get `bug`,
+  /// features/user stories get `feature`, and everything else falls back to
+  /// `chore`.
+  private func branchPrefix(for adoType: String) -> String {
+    switch adoType.lowercased() {
+    case "bug": return "bug"
+    case "user story", "feature": return "feature"
+    default: return "chore"
+    }
+  }
+
   /// Characters git rejects in a ref name (control chars, space, and
   /// `~^:?*[\`) — replaced with `-` as the user types rather than left to
   /// surface as a shell/git error only once they hit Create.
@@ -108,9 +136,22 @@ struct NewWorktreeView: View {
     sanitizeBranchInput(text).replacingOccurrences(of: "/", with: "-")
   }
 
+  /// The default base branch for the selected clone, falling back to `develop`.
+  private var cloneDefaultBaseBranch: String {
+    let configured = selectedClone?.defaultBaseBranch?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return (configured?.isEmpty == false ? configured : nil) ?? "develop"
+  }
+
+  /// Wraps `baseBranch` so a manual pick stops the clone default from
+  /// overwriting it when the selected clone changes.
+  private var baseBranchBinding: Binding<String> {
+    Binding(get: { baseBranch }, set: { baseBranch = $0; baseBranchEdited = true })
+  }
+
   private var effectiveBranch: String {
     switch source {
     case .newBranch: return branchEdited ? branch : derivedBranch
+    case .workItem: return branchEdited ? branch : derivedWorkItemBranch
     case .existingBranch, .pullRequest: return existingLocalName
     }
   }
@@ -151,9 +192,11 @@ struct NewWorktreeView: View {
         case .existingBranch: existingBranchSection
         case .pullRequest: pullRequestSection
         case .newBranch: newBranchSection
+        case .workItem: workItemSection
         }
 
-        Section("Work item") {
+        if source != .workItem {
+          Section("Work item") {
           HStack {
             TextField("Work item URL", text: $workItemURLText,
                        prompt: Text("https://dev.azure.com/org/project/_workitems/edit/205552"))
@@ -175,9 +218,10 @@ struct NewWorktreeView: View {
               .font(.caption).foregroundStyle(.orange)
           }
         }
+        }
 
         Section("Shared config") {
-          BranchPickerField(title: "Base branch (PRJ_DEP)", selection: $baseBranch,
+          BranchPickerField(title: "Base branch (PRJ_DEP)", selection: baseBranchBinding,
                             localBranches: localBranches, remoteBranches: remoteBranches)
         }
         Section {
@@ -206,8 +250,14 @@ struct NewWorktreeView: View {
       .padding(16)
     }
     .frame(width: 520, height: 640)
-    .onAppear { if selectedCloneID == nil { selectedCloneID = workspace.clones.first?.commonDir } }
-    .onChange(of: selectedCloneID) { reloadBranches(); loadPullRequests() }
+    .onAppear {
+      if selectedCloneID == nil { selectedCloneID = workspace.clones.first?.commonDir }
+      if !baseBranchEdited { baseBranch = cloneDefaultBaseBranch }
+    }
+    .onChange(of: selectedCloneID) {
+      if !baseBranchEdited { baseBranch = cloneDefaultBaseBranch }
+      reloadBranches(); loadPullRequests()
+    }
     .onChange(of: existingBranch) { folderNameEdited = false }
     .onChange(of: source) { reloadBranches(); loadPullRequests() }
     .onChange(of: selectedPRId) {
@@ -222,7 +272,46 @@ struct NewWorktreeView: View {
         get: { effectiveBranch },
         set: { branch = sanitizeBranchInput($0); branchEdited = true }))
         .font(.body.monospaced())
-      BranchPickerField(title: "Base branch", selection: $baseBranch,
+      BranchPickerField(title: "Base branch", selection: baseBranchBinding,
+                        localBranches: localBranches, remoteBranches: remoteBranches)
+      folderNameField
+      locationRow
+    }
+  }
+
+  @ViewBuilder private var workItemSection: some View {
+    Section("Work item") {
+      HStack {
+        TextField("Work item URL", text: $workItemURLText,
+                   prompt: Text("https://dev.azure.com/org/project/_workitems/edit/205552"))
+        Button("Load") { fetchWorkItem() }
+          .disabled(parsedWorkItem == nil || fetching)
+        if fetching { ProgressView().controlSize(.small) }
+      }
+      if let fetchedTitle {
+        LabeledContent("Title") {
+          Text(fetchedTitle).foregroundStyle(.secondary).lineLimit(2)
+        }
+      }
+      if let fetchedBranchPrefix {
+        LabeledContent("Type") { Text(fetchedBranchPrefix).foregroundStyle(.secondary) }
+      }
+      if let fetchedWorkItemID {
+        LabeledContent("ID") {
+          Text(fetchedWorkItemID).font(.body.monospaced()).foregroundStyle(.secondary)
+        }
+      }
+      if let fetchError {
+        Label(fetchError, systemImage: "exclamationmark.triangle")
+          .font(.caption).foregroundStyle(.orange)
+      }
+    }
+    Section("Branch") {
+      TextField("Branch", text: Binding(
+        get: { effectiveBranch },
+        set: { branch = sanitizeBranchInput($0); branchEdited = true }))
+        .font(.body.monospaced())
+      BranchPickerField(title: "Base branch", selection: baseBranchBinding,
                         localBranches: localBranches, remoteBranches: remoteBranches)
       folderNameField
       locationRow
@@ -337,7 +426,7 @@ struct NewWorktreeView: View {
     if source == .pullRequest, existingWorktreeForSelectedPR != nil { return true }
     guard selectedClone != nil, targetPath != nil else { return false }
     switch source {
-    case .newBranch: return !effectiveBranch.hasSuffix("/") && !effectiveBranch.isEmpty && !baseBranch.isEmpty
+    case .newBranch, .workItem: return !effectiveBranch.hasSuffix("/") && !effectiveBranch.isEmpty && !baseBranch.isEmpty
     case .existingBranch: return !existingBranch.isEmpty
     case .pullRequest: return selectedPR != nil
     }
@@ -345,6 +434,8 @@ struct NewWorktreeView: View {
 
   private func reloadBranches() {
     fetchedTitle = nil
+    fetchedBranchPrefix = nil
+    fetchedWorkItemID = nil
     existingBranch = ""
     // Always fetched, not just for the existing-branch/new-branch tabs: the
     // Shared Config section's base-branch picker needs this regardless of
@@ -395,6 +486,14 @@ struct NewWorktreeView: View {
         if source == .newBranch {
           if let fetchedTitle = item.title { title = fetchedTitle }
           if let fetchedType = item.type { type = mapType(fetchedType) }
+        }
+        if source == .workItem {
+          fetchedWorkItemID = String(item.id)
+          fetchedBranchPrefix = item.type.map { branchPrefix(for: $0) } ?? "feature"
+          // Reset any prior manual edit so the freshly loaded item drives the
+          // derived `<prefix>/<id>` branch (still editable afterwards).
+          branchEdited = false
+          folderNameEdited = false
         }
       } catch {
         let scope = workItem.project.map { "\(workItem.org)/\($0)" } ?? workItem.org
@@ -458,8 +557,8 @@ struct NewWorktreeView: View {
   private func gitCommand(path: URL) -> String {
     let quotedPath = "'\(path.path)'"
     switch source {
-    case .newBranch:
-      return "git worktree add \(quotedPath) -b '\(effectiveBranch)' 'origin/\(baseBranch)'"
+    case .newBranch, .workItem:
+      return "git worktree add \(quotedPath) --no-track -b '\(effectiveBranch)' 'origin/\(baseBranch)'"
     case .existingBranch, .pullRequest:
       if isRemoteSelection {
         return "git worktree add \(quotedPath) --track -b '\(existingLocalName)' '\(existingBranch)'"

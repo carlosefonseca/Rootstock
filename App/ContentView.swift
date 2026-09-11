@@ -39,9 +39,6 @@ struct ContentView: View {
           EmptyDetailView()
         }
       }
-      // Explicit min width prevents the NSSplitView-backed inspector inside
-      // WorktreeDetailView from cycling NavigationSplitView's constraint
-      // passes on macOS 27 — without this the app crashes on launch.
       .navigationSplitViewColumnWidth(min: 560, ideal: 600)
     }
     // On the window body rather than inside the toolbar item itself — a

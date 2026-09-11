@@ -10,26 +10,29 @@ struct WorktreeDetailView: View {
   @AppStorage("detail.showInspector") private var showInspector = true
 
   var body: some View {
-    content
-      .inspector(isPresented: $showInspector) {
+    HStack(spacing: 0) {
+      content
+      if showInspector {
+        Divider()
         WorktreeInspector(worktree: worktree)
-          .inspectorColumnWidth(min: 300, ideal: 340, max: 480)
+          .frame(width: 340)
       }
-      .toolbar {
-        // Only while the inspector is hidden — otherwise it's just repeating
-        // the Status card sitting a few inches to the right.
-        if !showInspector {
-          ToolbarItem {
-            ToolbarStatusSummary(status: workspace.statuses[worktree.path])
-          }
-        }
+    }
+    .toolbar {
+      // Only while the inspector is hidden — otherwise it's just repeating
+      // the Status card sitting a few inches to the right.
+      if !showInspector {
         ToolbarItem {
-          Button("Inspector", systemImage: "sidebar.trailing") {
-            withAnimation(.snappy) { showInspector.toggle() }
-          }
+          ToolbarStatusSummary(status: workspace.statuses[worktree.path])
         }
       }
-      .background {
+      ToolbarItem {
+        Button("Inspector", systemImage: "sidebar.trailing") {
+          withAnimation(.snappy) { showInspector.toggle() }
+        }
+      }
+    }
+    .background {
         // Hidden buttons, not app-wide `.commands`, so these act on this
         // worktree's own window/detail pane rather than whichever window last
         // had focus — same scoping trick `MainTabBarView` uses for its tab

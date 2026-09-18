@@ -100,7 +100,7 @@ struct AzureSection: View {
       if let queueError = model.queueError {
         InlineErrorLine(message: queueError) { model.clearQueueError() }
       }
-      ForEach(model.additionalPRs) { entry in
+      ForEach(model.additionalPRs.filter { $0.source == .configured }) { entry in
         AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore,
                           onRemove: {
                             if let branch = worktree.branch {
@@ -112,6 +112,26 @@ struct AzureSection: View {
                               model.addDetectedPR(worktree: worktree, branch: branch, url: entry.url)
                             }
                           })
+      }
+      // Detected-but-unattached PRs (mentioned in the PR description but not
+      // yet added to the branch) get their own subsection rather than a badge
+      // per row, so the list isn't dominated by "From PR" repeated on each one.
+      let detectedPRs = model.additionalPRs.filter { $0.source == .detected }
+      if !detectedPRs.isEmpty {
+        Text("From PR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        ForEach(detectedPRs) { entry in
+          AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore,
+                            onRemove: {
+                              if let branch = worktree.branch {
+                                model.removeAdditionalPR(worktree: worktree, branch: branch, url: entry.url)
+                              }
+                            },
+                            onAdd: {
+                              if let branch = worktree.branch {
+                                model.addDetectedPR(worktree: worktree, branch: branch, url: entry.url)
+                              }
+                            })
+        }
       }
     }
   }
@@ -129,10 +149,23 @@ struct AzureSection: View {
           Spacer()
           AddWorkItemButton(worktree: worktree, branch: branch)
         }
-        ForEach(model.workItems) { entry in
+        ForEach(model.workItems.filter { $0.source == .configured }) { entry in
           WorkItemCard(entry: entry, worktree: worktree, tabsStore: tabsStore,
                        onRemove: { model.removeWorkItem(worktree: worktree, branch: branch, url: entry.url) },
                        onAdd: { model.addDetectedWorkItem(worktree: worktree, branch: branch, url: entry.url) })
+        }
+        // Detected-but-unattached work items (mentioned in the PR description
+        // but not yet added to the branch) get their own subsection rather than
+        // a badge per row, so the list isn't dominated by "From PR" repeated on
+        // each one.
+        let detectedWorkItems = model.workItems.filter { $0.source == .detected }
+        if !detectedWorkItems.isEmpty {
+          Text("From PR").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+          ForEach(detectedWorkItems) { entry in
+            WorkItemCard(entry: entry, worktree: worktree, tabsStore: tabsStore,
+                         onRemove: { model.removeWorkItem(worktree: worktree, branch: branch, url: entry.url) },
+                         onAdd: { model.addDetectedWorkItem(worktree: worktree, branch: branch, url: entry.url) })
+          }
         }
       }
     }
@@ -501,7 +534,6 @@ private struct AdditionalPRCard: View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         Group {
-          if entry.source == .detected { StatusPill(text: "From PR", tint: .orange) }
           if let pr = entry.pr {
             StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
                        tint: (pr.isDraft ?? false) ? .secondary : .blue)
@@ -513,10 +545,6 @@ private struct AdditionalPRCard: View {
           Text("#\(String(entry.url.id))").font(.caption.monospaced()).foregroundStyle(.secondary)
         }
         Spacer()
-        if entry.source == .detected {
-          Button("Add to Branch", systemImage: "plus.circle") { onAdd() }
-            .controlSize(.small).labelStyle(.iconOnly)
-        }
         Button("Open", systemImage: "arrow.up.right.square") {
           WebLinkOpener.open(entry.url.canonical, title: "PR #\(entry.url.id)",
                              systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
@@ -620,7 +648,6 @@ private struct WorkItemCard: View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         Group {
-          if entry.source == .detected { StatusPill(text: "From PR", tint: .orange) }
           if let item = entry.detail {
             HStack(spacing: 6) {
               if let type = item.type { StatusPill(text: type, tint: .purple) }
@@ -632,10 +659,6 @@ private struct WorkItemCard: View {
           }
         }
         Spacer()
-        if entry.source == .detected {
-          Button("Add to Branch", systemImage: "plus.circle") { onAdd() }
-            .controlSize(.small).labelStyle(.iconOnly)
-        }
         Button("Open", systemImage: "arrow.up.right.square") {
           WebLinkOpener.open(entry.url.canonical, title: "Work Item #\(entry.url.id)",
                              systemImage: "checklist", worktree: worktree, tabsStore: tabsStore)

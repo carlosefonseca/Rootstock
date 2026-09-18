@@ -95,6 +95,20 @@ final class WorkspaceModel {
     }
   }
 
+  /// The most-recently-selected worktree other than `excluded`, if it's still
+  /// live. Used instead of `selectAdjacentWorktree` when deleting the current
+  /// worktree — picking whatever's next in list order can land on something
+  /// that was never actually visited, which then gets recorded as "recent"
+  /// purely as a side effect of becoming selected.
+  private func mostRecentWorktree(excluding excluded: String) -> WorktreeInfo? {
+    for path in recentPaths where path != excluded {
+      for list in worktrees.values {
+        if let match = list.first(where: { $0.path == path }) { return match }
+      }
+    }
+    return nil
+  }
+
   func clone(forWorktree worktree: WorktreeInfo) -> TrackedClone? {
     clones.first { commonDir in
       worktrees[commonDir.commonDir]?.contains(where: { $0.path == worktree.path }) ?? false
@@ -185,7 +199,13 @@ final class WorkspaceModel {
     guard clone.rootPath != worktree.path else { return "Can't delete a clone's main worktree." }
 
     let wasSelected = selectedPath == worktree.path
-    if wasSelected { selectAdjacentWorktree(offset: 1) }
+    if wasSelected {
+      if let recent = mostRecentWorktree(excluding: worktree.path) {
+        selectedPath = recent.path
+      } else {
+        selectAdjacentWorktree(offset: 1)
+      }
+    }
 
     let result = await Git.removeWorktree(worktree.path, in: clone.rootURL, force: force)
     guard result.succeeded else {

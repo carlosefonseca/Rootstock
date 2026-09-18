@@ -222,7 +222,17 @@ enum Git {
   /// `git worktree remove` refuses those.
   static func removeWorktree(_ path: String, in directory: URL, force: Bool) async -> ShellResult {
     let flag = force ? "--force " : ""
-    return await ShellRunner.run("git worktree remove \(flag)'\(path)'", in: directory)
+    let result = await ShellRunner.run("git worktree remove \(flag)'\(path)'", in: directory)
+    guard !result.succeeded, result.stderr.contains("working trees containing submodules") else {
+      return result
+    }
+    // `git worktree remove` refuses this unconditionally when the worktree has
+    // submodules checked out — unlike a dirty/locked worktree, `--force`
+    // doesn't override it, so retrying with `force: true` just fails the same
+    // way forever. Removing the directory by hand and pruning the now-stale
+    // worktree metadata is git's own documented workaround.
+    guard (try? FileManager.default.removeItem(atPath: path)) != nil else { return result }
+    return await ShellRunner.run("git worktree prune", in: directory)
   }
 
   static func lastFetch(in directory: URL) async -> Date? {

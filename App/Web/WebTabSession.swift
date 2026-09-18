@@ -22,6 +22,24 @@ final class WebTabSession: NSObject {
   /// tab's latest URL without polling.
   var onNavigate: (() -> Void)?
 
+  /// Bumped every time a download finishes or fails, so `WebTabPane` can show
+  /// a transient toast the same way `userZoomCount` drives the zoom readout.
+  /// `lastDownloadEvent` holds what to show; the counter is what triggers it,
+  /// since re-downloading the same file (finish → finish) wouldn't otherwise
+  /// register as a SwiftUI `onChange`.
+  private(set) var downloadEventCount = 0
+  private(set) var lastDownloadEvent: DownloadEvent?
+
+  enum DownloadEvent {
+    case finished(URL)
+    case failed(fileName: String)
+  }
+
+  /// Destinations chosen in `decideDestinationUsing`, keyed by the in-flight
+  /// `WKDownload` so `downloadDidFinish`/`didFailWithError` — which only hand
+  /// back the download itself, not its path — can report what file it was.
+  private var downloadDestinations: [ObjectIdentifier: URL] = [:]
+
   /// Fired when the user picks "Open in New Tab" from a link's context menu.
   var onOpenInNewTab: ((String) -> Void)?
 
@@ -232,6 +250,47 @@ final class WebTabSession: NSObject {
     onAddPullRequest?(url)
   }
 
+  // MARK: Downloads
+
+  fileprivate func beginDownload(_ download: WKDownload) {
+    download.delegate = self
+  }
+
+  fileprivate func reportDownloadFinished(id: ObjectIdentifier) {
+    guard let url = downloadDestinations.removeValue(forKey: id) else { return }
+    lastDownloadEvent = .finished(url)
+    downloadEventCount += 1
+  }
+
+  fileprivate func reportDownloadFailed(id: ObjectIdentifier) {
+    let fileName = downloadDestinations.removeValue(forKey: id)?.lastPathComponent ?? "File"
+    lastDownloadEvent = .failed(fileName: fileName)
+    downloadEventCount += 1
+  }
+
+  fileprivate func recordDownloadDestination(_ url: URL, for id: ObjectIdentifier) {
+    downloadDestinations[id] = url
+  }
+
+  /// Resolves `suggestedFilename` against `~/Downloads`, the way Safari does
+  /// by default — de-duplicated Finder-style ("File.zip" → "File 2.zip")
+  /// rather than overwriting an earlier download of the same name.
+  private nonisolated static func availableDownloadURL(for suggestedFilename: String) -> URL {
+    let downloadsDir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+    let candidate = downloadsDir.appendingPathComponent(suggestedFilename)
+    guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
+    let ext = candidate.pathExtension
+    let base = ext.isEmpty ? suggestedFilename : String(suggestedFilename.dropLast(ext.count + 1))
+    var counter = 2
+    while true {
+      let name = ext.isEmpty ? "\(base) \(counter)" : "\(base) \(counter).\(ext)"
+      let next = downloadsDir.appendingPathComponent(name)
+      if !FileManager.default.fileExists(atPath: next.path) { return next }
+      counter += 1
+    }
+  }
+
   /// Reads the installed Safari's actual version rather than hardcoding one,
   /// so it doesn't silently drift stale after a Safari update.
   private static var safariUserAgentSuffix: String {
@@ -266,6 +325,29 @@ extension WebTabSession: WKNavigationDelegate {
 
   nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
     Task { @MainActor in refreshState(from: webView) }
+  }
+
+  /// Anything the webview can't render itself (a `.zip`, a `.dmg`, a
+  /// `Content-Disposition: attachment` response) becomes a download instead
+  /// of the navigation silently failing. Content types WebKit *can* show
+  /// (PDFs, images) still open inline, matching Safari's default.
+  nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+    decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
+  }
+
+  /// A navigation that resolved to a download per the policy above.
+  nonisolated func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
+                            didBecome download: WKDownload) {
+    Task { @MainActor in beginDownload(download) }
+  }
+
+  /// The user picked "Download Linked File" from the native right-click menu
+  /// — WebKit routes that straight here rather than through
+  /// `decidePolicyFor navigationResponse`, since no navigation ever starts.
+  nonisolated func webView(_ webView: WKWebView, navigationAction: WKNavigationAction,
+                            didBecome download: WKDownload) {
+    Task { @MainActor in beginDownload(download) }
   }
 
   private func refreshState(from webView: WKWebView, applyZoom: Bool = false) {
@@ -316,6 +398,26 @@ extension WebTabSession: WKNavigationDelegate {
         self.favicon = image
       }
     }
+  }
+}
+
+extension WebTabSession: WKDownloadDelegate {
+  nonisolated func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
+                             suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+    let destination = Self.availableDownloadURL(for: suggestedFilename)
+    let id = ObjectIdentifier(download)
+    Task { @MainActor in recordDownloadDestination(destination, for: id) }
+    completionHandler(destination)
+  }
+
+  nonisolated func downloadDidFinish(_ download: WKDownload) {
+    let id = ObjectIdentifier(download)
+    Task { @MainActor in reportDownloadFinished(id: id) }
+  }
+
+  nonisolated func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+    let id = ObjectIdentifier(download)
+    Task { @MainActor in reportDownloadFailed(id: id) }
   }
 }
 

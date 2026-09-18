@@ -12,6 +12,10 @@ struct WebTabPane: View {
   /// Cmd+/Cmd- press actually did. "Reset Zoom" lives in the tab's menu.
   @State private var zoomIndicator: Double?
   @State private var zoomIndicatorTask: Task<Void, Never>?
+  /// Non-nil while the download toast is on screen — mirrors `zoomIndicator`'s
+  /// lifecycle, just parked in the opposite corner so the two never collide.
+  @State private var downloadToast: WebTabSession.DownloadEvent?
+  @State private var downloadToastTask: Task<Void, Never>?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -20,6 +24,7 @@ struct WebTabPane: View {
       WebTabViewRepresentable(session: session)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .top) { zoomOverlay }
+        .overlay(alignment: .bottomTrailing) { downloadOverlay }
     }
     .onAppear {
       addressText = displayString(session.currentURLString)
@@ -33,6 +38,7 @@ struct WebTabPane: View {
       if !addressFocused { addressText = displayString(new) }
     }
     .onChange(of: session.userZoomCount) { showZoomIndicator() }
+    .onChange(of: session.downloadEventCount) { showDownloadToast() }
   }
 
   @ViewBuilder private var zoomOverlay: some View {
@@ -57,6 +63,60 @@ struct WebTabPane: View {
       try? await Task.sleep(for: .seconds(1.2))
       guard !Task.isCancelled else { return }
       withAnimation(.easeOut(duration: 0.25)) { zoomIndicator = nil }
+    }
+  }
+
+  @ViewBuilder private var downloadOverlay: some View {
+    if let downloadToast {
+      downloadToastView(downloadToast)
+        .padding(.trailing, 14)
+        .padding(.bottom, 14)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+  }
+
+  @ViewBuilder
+  private func downloadToastView(_ event: WebTabSession.DownloadEvent) -> some View {
+    switch event {
+    case .finished(let url):
+      Button {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+      } label: {
+        HStack(spacing: 8) {
+          Image(systemName: "arrow.down.circle.fill").foregroundStyle(.green)
+          VStack(alignment: .leading, spacing: 1) {
+            Text("Download Complete").font(.callout.weight(.medium))
+            Text(url.lastPathComponent).font(.caption).foregroundStyle(.secondary)
+          }
+        }
+      }
+      .buttonStyle(.plain)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .background(.regularMaterial, in: .rect(cornerRadius: 10))
+      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+      .shadow(radius: 6, y: 2)
+    case .failed(let fileName):
+      HStack(spacing: 8) {
+        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+        Text("Download Failed: \(fileName)").font(.callout.weight(.medium))
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .background(.regularMaterial, in: .rect(cornerRadius: 10))
+      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+      .shadow(radius: 6, y: 2)
+    }
+  }
+
+  private func showDownloadToast() {
+    guard let event = session.lastDownloadEvent else { return }
+    downloadToastTask?.cancel()
+    withAnimation(.snappy(duration: 0.15)) { downloadToast = event }
+    downloadToastTask = Task {
+      try? await Task.sleep(for: .seconds(4))
+      guard !Task.isCancelled else { return }
+      withAnimation(.easeOut(duration: 0.25)) { downloadToast = nil }
     }
   }
 

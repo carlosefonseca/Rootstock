@@ -294,7 +294,7 @@ final class WorktreeAzureModel {
       guard let remote, let pr else { return nil }
       return PullRequestURL(org: remote.org, project: remote.project, repo: remote.repo, id: pr.pullRequestId)
     }()
-    let detected = PullRequestResolver.detect(in: prDescription, excluding: configured, selfPR: selfURL)
+    let detected = PullRequestResolver.detect(in: prDescription, excluding: configured, selfPR: selfURL, remote: remote)
     let entries: [(url: PullRequestURL, source: EntrySource)] =
       configured.map { ($0, .configured) } + detected.map { ($0, .detected) }
     for (prURL, _) in entries { AzureSettingsStore.addManualOrg(prURL.org) }

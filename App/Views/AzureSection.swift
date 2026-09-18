@@ -673,6 +673,14 @@ private struct WorkItemCard: View {
         .fixedSize()
       }
       if let title = entry.detail?.title { Text(title).font(.callout).lineLimit(2) }
+      if let figmaURL = entry.detail?.figmaURL {
+        Button("Figma", systemImage: "paintbrush.pointed") {
+          WebLinkOpener.open(figmaURL, title: "Figma", systemImage: "paintbrush.pointed",
+                             worktree: worktree, tabsStore: tabsStore)
+        }
+        .controlSize(.small)
+        .buttonStyle(.bordered)
+      }
     }
     .contentShape(.rect)
     .contextMenu { menuItems }

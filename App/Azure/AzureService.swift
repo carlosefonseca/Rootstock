@@ -187,21 +187,56 @@ struct AzureService {
   }
 }
 
-/// Finds a work-item link mentioned in a PR description that isn't already in
+/// Finds work-item links mentioned in a PR description that aren't already in
 /// the branch's configured list — the same trick the team's Ruby script uses
-/// to relate a PR to a work item, offered here as a one-click "Confirm"
-/// suggestion rather than auto-added (the URL might be wrong, or point to a
-/// related-but-different item).
+/// to relate a PR to a work item. Detected items are shown automatically
+/// (`AzureSection` renders them alongside configured ones, tagged "From PR"),
+/// and "Add" just pins one into the branch's persisted config so it keeps
+/// showing even if the description text changes later.
 enum WorkItemResolver {
   private static let urlRegex = try! NSRegularExpression(
     pattern: #"https://dev\.azure\.com/\S+?/_workitems/edit/\d+"#)
 
-  static func detect(in prDescription: String?, excluding configured: [WorkItemURL]) -> WorkItemURL? {
-    guard let prDescription else { return nil }
-    let range = NSRange(prDescription.startIndex..., in: prDescription)
-    guard let match = urlRegex.firstMatch(in: prDescription, range: range),
-          let r = Range(match.range, in: prDescription),
-          let detected = WorkItemURL.parse(String(prDescription[r])) else { return nil }
-    return configured.contains(detected) ? nil : detected
+  static func detect(in prDescription: String?, excluding configured: [WorkItemURL]) -> [WorkItemURL] {
+    LinkResolver.matches(of: urlRegex, in: prDescription)
+      .compactMap { WorkItemURL.parse($0) }
+      .filter { !configured.contains($0) }
+      .uniqued()
+  }
+}
+
+/// Finds pull-request links mentioned in a PR description that aren't already
+/// in the branch's configured "additional PR" list and don't just point back
+/// at the branch's own PR — the PR-description analogue of `WorkItemResolver`.
+enum PullRequestResolver {
+  private static let urlRegex = try! NSRegularExpression(
+    pattern: #"https://dev\.azure\.com/\S+?/pullrequest/\d+"#)
+
+  static func detect(in prDescription: String?, excluding configured: [PullRequestURL],
+                      selfPR: PullRequestURL?) -> [PullRequestURL] {
+    LinkResolver.matches(of: urlRegex, in: prDescription)
+      .compactMap { PullRequestURL.parse($0) }
+      .filter { !configured.contains($0) && $0 != selfPR }
+      .uniqued()
+  }
+}
+
+private enum LinkResolver {
+  static func matches(of regex: NSRegularExpression, in text: String?) -> [String] {
+    guard let text else { return [] }
+    let range = NSRange(text.startIndex..., in: text)
+    return regex.matches(in: text, range: range).compactMap { match in
+      guard let r = Range(match.range, in: text) else { return nil }
+      return String(text[r])
+    }
+  }
+}
+
+private extension Array where Element: Hashable {
+  /// First-occurrence-wins de-duplication — a description can link the same
+  /// item more than once.
+  func uniqued() -> [Element] {
+    var seen = Set<Element>()
+    return filter { seen.insert($0).inserted }
   }
 }

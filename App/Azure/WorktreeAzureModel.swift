@@ -30,22 +30,30 @@ final class WorktreeAzureModel {
     var label: String? = nil
   }
 
-  /// One configured work item, with its fetched detail once available. `detail`
-  /// stays nil (not an error state) while the fetch is in flight or if it fails
-  /// — the id/org/project from the URL are enough to show something useful.
+  /// Where an entry came from: hand-added to the branch's shared config, or
+  /// found live in the PR description and shown without needing that step.
+  enum EntrySource { case configured, detected }
+
+  /// One work item — configured on the branch or detected in the PR
+  /// description — with its fetched detail once available. `detail` stays nil
+  /// (not an error state) while the fetch is in flight or if it fails — the
+  /// id/org/project from the URL are enough to show something useful.
   struct WorkItemEntry: Identifiable {
     var url: WorkItemURL
     var detail: ADOWorkItem?
+    var source: EntrySource = .configured
     var id: String { url.canonical }
   }
 
-  /// One manually-attached PR beyond the branch's auto-detected one — e.g. the
-  /// work was split across several PRs. `pr` stays nil (not an error state)
-  /// while the fetch is in flight or if it fails — the id/org/project/repo
-  /// from the URL are enough to show something useful.
+  /// One PR beyond the branch's auto-detected one — e.g. the work was split
+  /// across several PRs — either hand-attached or detected in the PR
+  /// description. `pr` stays nil (not an error state) while the fetch is in
+  /// flight or if it fails — the id/org/project/repo from the URL are enough
+  /// to show something useful.
   struct AdditionalPREntry: Identifiable {
     var url: PullRequestURL
     var pr: ADOPullRequest?
+    var source: EntrySource = .configured
     var id: String { url.canonical }
   }
 
@@ -66,11 +74,12 @@ final class WorktreeAzureModel {
   /// A refresh that failed while there was still good data to show — reported
   /// alongside the stale content instead of replacing it with `.failed`.
   private(set) var reloadError: String?
+  /// Configured work items lead, in config order, followed by any detected in
+  /// the PR description — both shown without a confirmation step.
   private(set) var workItems: [WorkItemEntry] = []
+  /// Configured additional PRs lead, in config order, followed by any detected
+  /// in the PR description — both shown without a confirmation step.
   private(set) var additionalPRs: [AdditionalPREntry] = []
-  /// A work-item link found in the PR description that isn't in the configured
-  /// list yet — offered as a "Confirm" suggestion, never added automatically.
-  private(set) var detectedWorkItem: WorkItemURL?
 
   // Held here (not as separate @State on AzureSection) so it's part of the same
   // Observable graph as `phase` and updates in the same transaction — the view
@@ -144,9 +153,9 @@ final class WorktreeAzureModel {
     }
 
     await resolveWorkItems(worktree: worktree, branch: branch, prDescription: pr?.description)
-    await resolveAdditionalPRs(worktree: worktree, branch: branch)
+    await resolveAdditionalPRs(worktree: worktree, branch: branch, prDescription: pr?.description)
 
-    if remote == nil && workItems.isEmpty && detectedWorkItem == nil && additionalPRs.isEmpty {
+    if remote == nil && workItems.isEmpty && additionalPRs.isEmpty {
       phase = .notConfigured
     } else if let prFailure, workItems.isEmpty, !showingContent {
       phase = .failed(prFailure.localizedDescription)
@@ -164,20 +173,18 @@ final class WorktreeAzureModel {
     pipelines = []
     workItems = []
     additionalPRs = []
-    detectedWorkItem = nil
     reloadError = nil
     queueError = nil
   }
 
-  /// Adds the detected suggestion to the branch's shared config and re-fetches.
-  func confirmDetectedWorkItem(worktree: WorktreeInfo, branch: String) {
-    guard let detected = detectedWorkItem else { return }
+  /// Pins a work item detected in the PR description into the branch's shared
+  /// config, so it keeps showing even if the description text changes later.
+  func addDetectedWorkItem(worktree: WorktreeInfo, branch: String, url: WorkItemURL) {
     var config = BranchConfig.load(worktree: worktree.url, branch: branch)
-    if !config.workItemURLs.contains(detected.canonical) {
-      config.workItemURLs.append(detected.canonical)
+    if !config.workItemURLs.contains(url.canonical) {
+      config.workItemURLs.append(url.canonical)
       try? config.save(worktree: worktree.url, branch: branch)
     }
-    detectedWorkItem = nil
     NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
 
@@ -243,16 +250,30 @@ final class WorktreeAzureModel {
     NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
   }
 
+  /// Pins a PR detected in the PR description into the branch's shared config,
+  /// so it keeps showing even if the description text changes later.
+  func addDetectedPR(worktree: WorktreeInfo, branch: String, url: PullRequestURL) {
+    var config = BranchConfig.load(worktree: worktree.url, branch: branch)
+    if !config.additionalPRURLs.contains(url.canonical) {
+      config.additionalPRURLs.append(url.canonical)
+      try? config.save(worktree: worktree.url, branch: branch)
+    }
+    NotificationCenter.default.post(name: .branchConfigChanged, object: nil)
+  }
+
   private func resolveWorkItems(worktree: WorktreeInfo, branch: String, prDescription: String?) async {
     let config = BranchConfig.load(worktree: worktree.url, branch: branch)
     let configured = config.workItemURLs.compactMap { WorkItemURL.parse($0) }
-    for wiURL in configured { AzureSettingsStore.addManualOrg(wiURL.org) }
+    let detected = WorkItemResolver.detect(in: prDescription, excluding: configured)
+    let entries: [(url: WorkItemURL, source: EntrySource)] =
+      configured.map { ($0, .configured) } + detected.map { ($0, .detected) }
+    for (wiURL, _) in entries { AzureSettingsStore.addManualOrg(wiURL.org) }
 
     workItems = await withTaskGroup(of: WorkItemEntry.self) { group in
-      for wiURL in configured {
+      for (wiURL, source) in entries {
         group.addTask {
           let detail = try? await self.service.workItem(org: wiURL.org, project: wiURL.project, id: wiURL.id)
-          return WorkItemEntry(url: wiURL, detail: detail)
+          return WorkItemEntry(url: wiURL, detail: detail, source: source)
         }
       }
       var results: [WorkItemEntry] = []
@@ -260,22 +281,30 @@ final class WorktreeAzureModel {
       return results
     }
     // withTaskGroup doesn't preserve submission order.
-    workItems.sort { configured.firstIndex(of: $0.url) ?? 0 < configured.firstIndex(of: $1.url) ?? 0 }
-
-    detectedWorkItem = WorkItemResolver.detect(in: prDescription, excluding: configured)
+    let order = entries.map(\.url)
+    workItems.sort { (order.firstIndex(of: $0.url) ?? 0) < (order.firstIndex(of: $1.url) ?? 0) }
   }
 
-  private func resolveAdditionalPRs(worktree: WorktreeInfo, branch: String) async {
+  private func resolveAdditionalPRs(worktree: WorktreeInfo, branch: String, prDescription: String?) async {
     let config = BranchConfig.load(worktree: worktree.url, branch: branch)
     let configured = config.additionalPRURLs.compactMap { PullRequestURL.parse($0) }
-    for prURL in configured { AzureSettingsStore.addManualOrg(prURL.org) }
+    // Excludes the branch's own PR so a description that links back to itself
+    // (a template artifact, say) doesn't duplicate the "Branch" row above.
+    let selfURL: PullRequestURL? = {
+      guard let remote, let pr else { return nil }
+      return PullRequestURL(org: remote.org, project: remote.project, repo: remote.repo, id: pr.pullRequestId)
+    }()
+    let detected = PullRequestResolver.detect(in: prDescription, excluding: configured, selfPR: selfURL)
+    let entries: [(url: PullRequestURL, source: EntrySource)] =
+      configured.map { ($0, .configured) } + detected.map { ($0, .detected) }
+    for (prURL, _) in entries { AzureSettingsStore.addManualOrg(prURL.org) }
 
     additionalPRs = await withTaskGroup(of: AdditionalPREntry.self) { group in
-      for prURL in configured {
+      for (prURL, source) in entries {
         group.addTask {
           let remote = AzureRemote(org: prURL.org, project: prURL.project, repo: prURL.repo)
           let pull = try? await self.service.pullRequest(remote: remote, id: prURL.id)
-          return AdditionalPREntry(url: prURL, pr: pull)
+          return AdditionalPREntry(url: prURL, pr: pull, source: source)
         }
       }
       var results: [AdditionalPREntry] = []
@@ -283,7 +312,8 @@ final class WorktreeAzureModel {
       return results
     }
     // withTaskGroup doesn't preserve submission order.
-    additionalPRs.sort { configured.firstIndex(of: $0.url) ?? 0 < configured.firstIndex(of: $1.url) ?? 0 }
+    let order = entries.map(\.url)
+    additionalPRs.sort { (order.firstIndex(of: $0.url) ?? 0) < (order.firstIndex(of: $1.url) ?? 0) }
   }
 
   /// Converts each pipeline definition's latest build into a `Pipeline`,

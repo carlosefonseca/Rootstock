@@ -100,11 +100,17 @@ struct AzureSection: View {
         InlineErrorLine(message: queueError) { model.clearQueueError() }
       }
       ForEach(model.additionalPRs) { entry in
-        AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore) {
-          if let branch = worktree.branch {
-            model.removeAdditionalPR(worktree: worktree, branch: branch, url: entry.url)
-          }
-        }
+        AdditionalPRCard(entry: entry, worktree: worktree, tabsStore: tabsStore,
+                          onRemove: {
+                            if let branch = worktree.branch {
+                              model.removeAdditionalPR(worktree: worktree, branch: branch, url: entry.url)
+                            }
+                          },
+                          onAdd: {
+                            if let branch = worktree.branch {
+                              model.addDetectedPR(worktree: worktree, branch: branch, url: entry.url)
+                            }
+                          })
       }
     }
   }
@@ -123,14 +129,9 @@ struct AzureSection: View {
           AddWorkItemButton(worktree: worktree, branch: branch)
         }
         ForEach(model.workItems) { entry in
-          WorkItemCard(entry: entry, worktree: worktree, tabsStore: tabsStore) {
-            model.removeWorkItem(worktree: worktree, branch: branch, url: entry.url)
-          }
-        }
-        if let detected = model.detectedWorkItem {
-          DetectedWorkItemRow(url: detected) {
-            model.confirmDetectedWorkItem(worktree: worktree, branch: branch)
-          }
+          WorkItemCard(entry: entry, worktree: worktree, tabsStore: tabsStore,
+                       onRemove: { model.removeWorkItem(worktree: worktree, branch: branch, url: entry.url) },
+                       onAdd: { model.addDetectedWorkItem(worktree: worktree, branch: branch, url: entry.url) })
         }
       }
     }
@@ -490,11 +491,13 @@ private struct AdditionalPRCard: View {
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
   var onRemove: () -> Void
+  var onAdd: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         Group {
+          if entry.source == .detected { StatusPill(text: "From PR", tint: .orange) }
           if let pr = entry.pr {
             StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
                        tint: (pr.isDraft ?? false) ? .secondary : .blue)
@@ -506,6 +509,10 @@ private struct AdditionalPRCard: View {
           Text("#\(String(entry.url.id))").font(.caption.monospaced()).foregroundStyle(.secondary)
         }
         Spacer()
+        if entry.source == .detected {
+          Button("Add to Branch", systemImage: "plus.circle") { onAdd() }
+            .controlSize(.small).labelStyle(.iconOnly)
+        }
         Button("Open", systemImage: "arrow.up.right.square") {
           WebLinkOpener.open(entry.url.canonical, title: "PR #\(entry.url.id)",
                              systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
@@ -529,7 +536,11 @@ private struct AdditionalPRCard: View {
     Button("Copy URL") { copy(entry.url.canonical) }
     Button("Copy ID") { copy(String(entry.url.id)) }
     Divider()
-    Button("Remove", role: .destructive) { onRemove() }
+    if entry.source == .detected {
+      Button("Add to Branch") { onAdd() }
+    } else {
+      Button("Remove", role: .destructive) { onRemove() }
+    }
   }
 
   private func copy(_ string: String) {
@@ -599,11 +610,13 @@ private struct WorkItemCard: View {
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
   var onRemove: () -> Void
+  var onAdd: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         Group {
+          if entry.source == .detected { StatusPill(text: "From PR", tint: .orange) }
           if let item = entry.detail {
             HStack(spacing: 6) {
               if let type = item.type { StatusPill(text: type, tint: .purple) }
@@ -615,6 +628,10 @@ private struct WorkItemCard: View {
           }
         }
         Spacer()
+        if entry.source == .detected {
+          Button("Add to Branch", systemImage: "plus.circle") { onAdd() }
+            .controlSize(.small).labelStyle(.iconOnly)
+        }
         Button("Open", systemImage: "arrow.up.right.square") {
           WebLinkOpener.open(entry.url.canonical, title: "Work Item #\(entry.url.id)",
                              systemImage: "checklist", worktree: worktree, tabsStore: tabsStore)
@@ -640,7 +657,11 @@ private struct WorkItemCard: View {
     Button("Copy URL") { copy(entry.url.canonical) }
     Button("Copy ID") { copy(entry.url.id) }
     Divider()
-    Button("Remove", role: .destructive) { onRemove() }
+    if entry.source == .detected {
+      Button("Add to Branch") { onAdd() }
+    } else {
+      Button("Remove", role: .destructive) { onRemove() }
+    }
   }
 
   private func copy(_ string: String) {
@@ -700,20 +721,6 @@ private struct AddWorkItemButton: View {
     urlText = ""
     error = nil
     showingPopover = false
-  }
-}
-
-private struct DetectedWorkItemRow: View {
-  var url: WorkItemURL
-  var onConfirm: () -> Void
-
-  var body: some View {
-    HStack(spacing: 8) {
-      Label("Found #\(url.id) in the PR description", systemImage: "questionmark.circle")
-        .font(.caption).foregroundStyle(.orange)
-      Spacer()
-      Button("Add") { onConfirm() }.controlSize(.mini)
-    }
   }
 }
 

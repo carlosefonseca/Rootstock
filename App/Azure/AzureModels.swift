@@ -179,6 +179,10 @@ struct ADOWorkItem: Decodable, Identifiable {
   var title: String? { fields?["System.Title"]?.string }
   var state: String? { fields?["System.State"]?.string }
   var type: String? { fields?["System.WorkItemType"]?.string }
+  var description: String? { fields?["System.Description"]?.string }
+  /// The first Figma link mentioned in the description, if any — surfaced
+  /// next to the work item so design work is reachable in one click.
+  var figmaURL: String? { FigmaLinkResolver.detect(in: description) }
 }
 
 /// Decodes ADO field values that may be strings, numbers, or objects — we only

@@ -183,7 +183,7 @@ struct AzureService {
       path = "_apis/wit/workitems/\(id)"
     }
     return try await client.get(ADOWorkItem.self, org: org, path: path,
-      query: ["fields": "System.Title,System.State,System.WorkItemType"])
+      query: ["fields": "System.Title,System.State,System.WorkItemType,System.Description"])
   }
 }
 
@@ -211,13 +211,42 @@ enum WorkItemResolver {
 enum PullRequestResolver {
   private static let urlRegex = try! NSRegularExpression(
     pattern: #"https://dev\.azure\.com/\S+?/pullrequest/\d+"#)
+  /// Azure DevOps' `!12345` shorthand for linking another PR in the same repo —
+  /// stored as plain text in the description (unlike a pasted link), so it
+  /// needs its own pattern. The lookbehind avoids matching mid-word (e.g. a
+  /// stray "x!123") and a leading "!!123".
+  private static let mentionRegex = try! NSRegularExpression(
+    pattern: #"(?<![\w!])!(\d{1,6})\b"#)
 
+  /// `remote` is the branch's own PR's repo — the shorthand mention carries no
+  /// org/project/repo of its own, so it's resolved against the repo the
+  /// description was written in.
   static func detect(in prDescription: String?, excluding configured: [PullRequestURL],
-                      selfPR: PullRequestURL?) -> [PullRequestURL] {
-    LinkResolver.matches(of: urlRegex, in: prDescription)
-      .compactMap { PullRequestURL.parse($0) }
+                      selfPR: PullRequestURL?, remote: AzureRemote?) -> [PullRequestURL] {
+    var found = LinkResolver.matches(of: urlRegex, in: prDescription).compactMap { PullRequestURL.parse($0) }
+    if let remote {
+      let mentioned = LinkResolver.matches(of: mentionRegex, in: prDescription).compactMap { match -> PullRequestURL? in
+        guard let id = Int(match.dropFirst()) else { return nil }
+        return PullRequestURL(org: remote.org, project: remote.project, repo: remote.repo, id: id)
+      }
+      found.append(contentsOf: mentioned)
+    }
+    return found
       .filter { !configured.contains($0) && $0 != selfPR }
       .uniqued()
+  }
+}
+
+/// Finds the first Figma link mentioned in a work item's (HTML) description,
+/// so design work is reachable straight from the work item card without
+/// requiring it to be separately bookmarked.
+enum FigmaLinkResolver {
+  private static let urlRegex = try! NSRegularExpression(
+    pattern: #"https://(?:www\.)?figma\.com/[^\s"'<>]+"#)
+
+  static func detect(in descriptionHTML: String?) -> String? {
+    LinkResolver.matches(of: urlRegex, in: descriptionHTML).first?
+      .replacingOccurrences(of: "&amp;", with: "&")
   }
 }
 

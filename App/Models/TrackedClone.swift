@@ -29,4 +29,10 @@ final class TrackedClone {
   }
 
   var rootURL: URL { URL(fileURLWithPath: rootPath) }
+
+  /// The configured default base branch, falling back to `develop` when unset or blank.
+  var resolvedDefaultBaseBranch: String {
+    let trimmed = defaultBaseBranch?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return (trimmed?.isEmpty == false ? trimmed : nil) ?? "develop"
+  }
 }

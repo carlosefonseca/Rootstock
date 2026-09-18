@@ -90,7 +90,8 @@ struct AzureSection: View {
       // a "Branch" badge — everything else is manually attached, in the order
       // it was added.
       BranchPRRow(pr: model.pr, unresolved: model.unresolved, pipelines: model.pipelines, remote: model.remote,
-                  branch: worktree.branch, worktree: worktree, tabsStore: tabsStore,
+                  branch: worktree.branch, targetBranch: workspace.clone(forWorktree: worktree)?.resolvedDefaultBaseBranch,
+                  worktree: worktree, tabsStore: tabsStore,
                   queueing: model.queueingPipelines,
                   onRun: { pipeline in
                     guard let branch = worktree.branch else { return }
@@ -168,6 +169,9 @@ private struct BranchPRRow: View {
   var pipelines: [WorktreeAzureModel.Pipeline]
   var remote: AzureRemote?
   var branch: String?
+  /// The clone's configured default base branch, pre-filled as the PR's target
+  /// when there's no active PR to show a real target from yet.
+  var targetBranch: String?
   var worktree: WorktreeInfo
   var tabsStore: WorktreeTabsStore
   var queueing: Set<Int>
@@ -237,7 +241,7 @@ private struct BranchPRRow: View {
           Spacer()
           if let remote, let branch {
             Button("Create PR", systemImage: "plus") {
-              WebLinkOpener.open(remote.createPRURL(sourceBranch: branch, targetBranch: nil), title: "Pull Request",
+              WebLinkOpener.open(remote.createPRURL(sourceBranch: branch, targetBranch: targetBranch), title: "Pull Request",
                                  systemImage: "arrow.triangle.pull", worktree: worktree, tabsStore: tabsStore)
             }
             .controlSize(.small)

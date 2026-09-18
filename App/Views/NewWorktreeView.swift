@@ -147,8 +147,7 @@ struct NewWorktreeView: View {
 
   /// The default base branch for the selected clone, falling back to `develop`.
   private var cloneDefaultBaseBranch: String {
-    let configured = selectedClone?.defaultBaseBranch?.trimmingCharacters(in: .whitespacesAndNewlines)
-    return (configured?.isEmpty == false ? configured : nil) ?? "develop"
+    selectedClone?.resolvedDefaultBaseBranch ?? "develop"
   }
 
   /// Wraps `baseBranch` so a manual pick stops the clone default from

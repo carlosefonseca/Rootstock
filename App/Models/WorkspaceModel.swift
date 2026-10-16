@@ -230,6 +230,7 @@ final class WorkspaceModel {
     for clone in clones {
       await refreshClone(commonDir: clone.commonDir, rootURL: clone.rootURL)
     }
+    NotificationCenter.default.post(name: .worktreeRefreshRequested, object: nil)
   }
 
   func refreshClone(commonDir: String, rootURL: URL) async {

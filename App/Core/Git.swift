@@ -24,6 +24,8 @@ struct WorktreeStatus: Hashable {
   /// worth surfacing when it isn't simply `<remote>/<this branch>`, since then
   /// "its remote" is pushing somewhere other than the obvious place.
   var upstream: String?
+  /// Commit the upstream ref points at; changes when a push or fetch moves it.
+  var upstreamOid: String?
   var remoteAhead = 0
   var remoteBehind = 0
 
@@ -149,6 +151,11 @@ enum Git {
       } else if line.hasPrefix("? ") {
         status.untracked += 1
       }
+    }
+
+    if status.hasUpstream {
+      let oid = await ShellRunner.run("git rev-parse --verify -q @{upstream}", in: directory)
+      if oid.succeeded { status.upstreamOid = oid.trimmedOut }
     }
 
     // Ahead/behind versus the configured parent branch, in addition to the remote.

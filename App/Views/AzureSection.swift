@@ -37,6 +37,12 @@ struct AzureSection: View {
     .onReceive(NotificationCenter.default.publisher(for: .worktreeRefreshRequested)) { _ in
       startReload()
     }
+    // A push (or fetch) moved the branch's remote-tracking commit: the PR,
+    // builds and comments on Azure DevOps have likely changed too.
+    .onChange(of: workspace.statuses[worktree.path]?.upstreamOid) { old, new in
+      guard old != nil, new != nil else { return }
+      startReload()
+    }
     .onDisappear { reloadTask?.cancel() }
   }
 

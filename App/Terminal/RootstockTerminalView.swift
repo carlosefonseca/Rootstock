@@ -19,6 +19,27 @@ final class RootstockTerminalView: LocalProcessTerminalView {
     pasteboard.setString(text, forType: .string)
   }
 
+  // MARK: Links
+
+  /// Called instead of opening the system browser when a web link is clicked.
+  var onOpenWebLink: ((URL) -> Void)?
+
+  /// SwiftTerm only reports a click as a link click with Cmd held (or on an
+  /// explicit OSC 8 hyperlink). http(s) links go to `onOpenWebLink` — an in-app
+  /// tab — unless Option is also held, which keeps the system-browser default
+  /// for OAuth flows and anything the embedded WKWebView can't handle.
+  override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+    guard let onOpenWebLink,
+          let url = URL(string: link),
+          let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+          !NSEvent.modifierFlags.contains(.option)
+    else {
+      super.requestOpenLink(source: source, link: link, params: params)
+      return
+    }
+    onOpenWebLink(url)
+  }
+
   // MARK: Drag destination
 
   /// SwiftTerm registers no dragged types at all, which is why a file dragged

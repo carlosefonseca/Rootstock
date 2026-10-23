@@ -11,7 +11,7 @@ import AppKit
 final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDelegate {
   let id: String            // session key (e.g. worktree path)
   let directory: URL
-  let terminalView: LocalProcessTerminalView
+  let terminalView: RootstockTerminalView
 
   private(set) var isRunning = false
   private(set) var title: String

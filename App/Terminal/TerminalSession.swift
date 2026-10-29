@@ -25,6 +25,7 @@ final class TerminalSession: NSObject, Identifiable, LocalProcessTerminalViewDel
     self.terminalView = RootstockTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
     super.init()
     terminalView.processDelegate = self
+    terminalView.startingDirectory = directory
     terminalView.font = AppSettings.terminalFont()
     // SwiftTerm defaults Option to a Meta-key modifier (sends ESC + key, for
     // Emacs-style Alt bindings), which swallows Option-modified key combos

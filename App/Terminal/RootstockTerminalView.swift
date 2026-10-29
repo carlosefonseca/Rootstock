@@ -24,13 +24,23 @@ final class RootstockTerminalView: LocalProcessTerminalView {
   /// Called instead of opening the system browser when a web link is clicked.
   var onOpenWebLink: ((URL) -> Void)?
 
+  /// The directory the shell was started in — the last place a relative path
+  /// is looked up when the shell's current directory doesn't contain it.
+  var startingDirectory: URL?
+
   /// SwiftTerm only reports a click as a link click with Cmd held (or on an
   /// explicit OSC 8 hyperlink). http(s) links go to `onOpenWebLink` — an in-app
   /// tab — unless Option is also held, which keeps the system-browser default
-  /// for OAuth flows and anything the embedded WKWebView can't handle.
+  /// for OAuth flows and anything the embedded WKWebView can't handle. File
+  /// and folder paths open with their default app (Finder for folders).
   override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+    guard let url = URL(string: link), url.scheme != nil else {
+      if let fileURL = existingFileURL(forPath: link) {
+        NSWorkspace.shared.open(fileURL)
+      }
+      return
+    }
     guard let onOpenWebLink,
-          let url = URL(string: link),
           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
           !NSEvent.modifierFlags.contains(.option)
     else {
@@ -38,6 +48,53 @@ final class RootstockTerminalView: LocalProcessTerminalView {
       return
     }
     onOpenWebLink(url)
+  }
+
+  /// SwiftTerm's own fallback resolves relative paths against the *app's*
+  /// working directory, so a path like `App/Foo.swift` printed by `git status`
+  /// never opens. This resolves it the way the user reads it: against whatever
+  /// is running in the foreground (a build tool may have `cd`'d), then the
+  /// shell, then the directory the tab was opened in. A trailing `:line` or
+  /// `:line:col` (compiler output, grep -n) is dropped if the full text isn't
+  /// itself a file.
+  private func existingFileURL(forPath link: String) -> URL? {
+    let path = (link.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+    guard !path.isEmpty else { return nil }
+    var candidates = [path]
+    if let location = path.range(of: #":[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) {
+      candidates.append(String(path[..<location.lowerBound]))
+    }
+    let bases = path.hasPrefix("/") ? [URL(filePath: "/")] : candidateBaseDirectories()
+    for candidate in candidates {
+      for base in bases {
+        let url = URL(filePath: candidate, relativeTo: base).standardizedFileURL
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+      }
+    }
+    return nil
+  }
+
+  private func candidateBaseDirectories() -> [URL] {
+    var pids: [pid_t] = []
+    if let process {
+      if process.childfd >= 0 { pids.append(tcgetpgrp(process.childfd)) }
+      pids.append(process.shellPid)
+    }
+    var bases = pids.compactMap(Self.workingDirectory(ofProcess:))
+    if let startingDirectory { bases.append(startingDirectory) }
+    var seen = Set<String>()
+    return bases.filter { seen.insert($0.path).inserted }
+  }
+
+  private static func workingDirectory(ofProcess pid: pid_t) -> URL? {
+    guard pid > 0 else { return nil }
+    var info = proc_vnodepathinfo()
+    let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+    let path = withUnsafeBytes(of: info.pvi_cdir.vip_path) { raw in
+      String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+    }
+    return path.isEmpty ? nil : URL(filePath: path, directoryHint: .isDirectory)
   }
 
   // MARK: Drag destination

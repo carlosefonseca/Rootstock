@@ -5,6 +5,7 @@ struct SidebarView: View {
   @Environment(WorkspaceModel.self) private var workspace
   @Environment(WorktreeTabsStore.self) private var tabsStore
   @Environment(WorktreeLinksStore.self) private var linksStore
+  @Environment(CustomActionsStore.self) private var customActions
   @Binding var editingTerminalCommandFor: TrackedClone?
 
   @State private var worktreeToDelete: WorktreeInfo?
@@ -117,7 +118,7 @@ struct SidebarView: View {
 
   private func delete(_ worktree: WorktreeInfo, force: Bool) {
     Task {
-      if let error = await workspace.deleteWorktree(worktree, tabsStore: tabsStore, linksStore: linksStore, force: force) {
+      if let error = await workspace.deleteWorktree(worktree, tabsStore: tabsStore, linksStore: linksStore, customActions: customActions, force: force) {
         deleteErrorWorktree = worktree
         deleteErrorMessage = error
       }

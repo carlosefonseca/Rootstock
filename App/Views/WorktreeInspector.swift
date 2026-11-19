@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The right-hand inspector: quick worktree context up top, then Azure DevOps,
-/// status, Makefile actions, and notes.
+/// status, Makefile actions, custom actions, and notes.
 struct WorktreeInspector: View {
   var worktree: WorktreeInfo
 
@@ -22,6 +22,10 @@ struct WorktreeInspector: View {
           }
         }
 
+        CollapsibleCard(title: "Custom Actions", systemImage: "terminal", stateKey: "customActions") {
+          CustomActionsSectionBody(worktree: worktree)
+        }
+
         if let branch = worktree.branch {
           CollapsibleCard(title: "Notes", systemImage: "note.text", stateKey: "notes") {
             NotesSectionBody(worktree: worktree, branch: branch)
@@ -40,6 +44,7 @@ private struct TopSection: View {
   @Environment(WorkspaceModel.self) private var workspace
   @Environment(WorktreeTabsStore.self) private var tabsStore
   @Environment(WorktreeLinksStore.self) private var linksStore
+  @Environment(CustomActionsStore.self) private var customActions
   var worktree: WorktreeInfo
 
   @State private var showingEditor = false
@@ -147,7 +152,7 @@ private struct TopSection: View {
 
   private func delete(force: Bool) {
     Task {
-      if let error = await workspace.deleteWorktree(worktree, tabsStore: tabsStore, linksStore: linksStore, force: force) {
+      if let error = await workspace.deleteWorktree(worktree, tabsStore: tabsStore, linksStore: linksStore, customActions: customActions, force: force) {
         deleteErrorMessage = error
         showingDeleteError = true
       }

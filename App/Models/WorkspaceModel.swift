@@ -194,7 +194,8 @@ final class WorkspaceModel {
   /// `force` is false — or `nil` on success.
   @discardableResult
   func deleteWorktree(_ worktree: WorktreeInfo, tabsStore: WorktreeTabsStore,
-                       linksStore: WorktreeLinksStore, force: Bool) async -> String? {
+                       linksStore: WorktreeLinksStore, customActions: CustomActionsStore,
+                       force: Bool) async -> String? {
     guard let clone = clone(forWorktree: worktree) else { return "No tracked clone found for this worktree." }
     guard clone.rootPath != worktree.path else { return "Can't delete a clone's main worktree." }
 
@@ -215,6 +216,7 @@ final class WorkspaceModel {
 
     tabsStore.closeAll(for: worktree)
     linksStore.setPullRequestURL(nil, for: worktree)
+    customActions.removeAll(for: worktree)
     recentPaths.removeAll { $0 == worktree.path }
     await refreshClone(commonDir: clone.commonDir, rootURL: clone.rootURL)
     if selectedPath == worktree.path { selectedPath = nil }

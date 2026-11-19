@@ -7,6 +7,7 @@ struct RootstockApp: App {
   @State private var workspace = WorkspaceModel()
   @State private var tabsStore = WorktreeTabsStore()
   @State private var linksStore = WorktreeLinksStore()
+  @State private var customActions = CustomActionsStore()
   @State private var prWorkModel = CrossRepoPRWorkModel()
   @Environment(\.openWindow) private var openWindow
   private let updaterController = SPUStandardUpdaterController(
@@ -18,6 +19,7 @@ struct RootstockApp: App {
         .environment(workspace)
         .environment(tabsStore)
         .environment(linksStore)
+        .environment(customActions)
         .environment(prWorkModel)
         .frame(minWidth: 820, minHeight: 520)
     }

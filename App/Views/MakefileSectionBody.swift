@@ -34,7 +34,7 @@ struct MakefileSectionBody: View {
           // .plain hands full sizing control to the label, which we then draw the
           // bordered look onto ourselves, so every row is genuinely the same width.
           Button {
-            runner.start("make \(target.name)", label: target.name, in: worktree.url)
+            runner.start("make \(target.name)", label: "make \(target.name)", in: worktree.url)
           } label: {
             VStack(alignment: .leading, spacing: 1) {
               Text(target.name).font(.callout.weight(.medium))
@@ -93,11 +93,12 @@ struct CommandOutputPanel: View {
       HStack(spacing: 8) {
         if runner.isRunning {
           ProgressView().controlSize(.small)
-          Text("make \(runner.runningLabel ?? "")").font(.caption.monospaced())
+          Text(runner.runningLabel ?? "").font(.caption.monospaced())
         } else if let code = runner.lastExitCode {
           Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.circle.fill")
             .foregroundStyle(code == 0 ? .green : .red)
-          Text(code == 0 ? "Done" : "Exit \(code)").font(.caption)
+          Text(code == 0 ? "Done" : "Exit \(code)" + (runner.lastSignal.map { " (\($0))" } ?? ""))
+            .font(.caption)
         }
         Spacer()
         if runner.isRunning {

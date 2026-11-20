@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// What the editor sheet is doing — `Identifiable` so it can drive `.sheet(item:)`.
@@ -161,10 +162,8 @@ private struct CustomActionEditor: View {
 
       VStack(alignment: .leading, spacing: 4) {
         Text("Command").font(.caption).foregroundStyle(.secondary)
-        TextEditor(text: $command)
-          .font(.system(.body, design: .monospaced))
-          .autocorrectionDisabled()
-          .frame(height: 90)
+        PlainCommandEditor(text: $command)
+          .frame(minHeight: 140, maxHeight: .infinity)
           .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
         Text("Runs with zsh in the worktree's folder.")
           .font(.caption2).foregroundStyle(.tertiary)
@@ -184,6 +183,57 @@ private struct CustomActionEditor: View {
       }
     }
     .padding(16)
-    .frame(width: 420)
+    // Flexible, so the sheet can be resized by dragging its edges.
+    .frame(minWidth: 460, idealWidth: 520, maxWidth: .infinity,
+           minHeight: 300, idealHeight: 340, maxHeight: .infinity)
+  }
+}
+
+/// A monospaced text view for shell commands. SwiftUI's `TextEditor` has no way
+/// to turn off smart quotes/dashes, which silently corrupt a command (“ ” and –
+/// aren't shell quotes/flags), so this wraps an `NSTextView` with every text
+/// substitution disabled.
+private struct PlainCommandEditor: NSViewRepresentable {
+  @Binding var text: String
+
+  func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+  func makeNSView(context: Context) -> NSScrollView {
+    let scrollView = NSTextView.scrollableTextView()
+    scrollView.hasVerticalScroller = true
+    scrollView.drawsBackground = false
+    guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
+    textView.delegate = context.coordinator
+    textView.isRichText = false
+    textView.allowsUndo = true
+    textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    textView.textContainerInset = NSSize(width: 4, height: 6)
+    textView.isAutomaticQuoteSubstitutionEnabled = false
+    textView.isAutomaticDashSubstitutionEnabled = false
+    textView.isAutomaticTextReplacementEnabled = false
+    textView.isAutomaticSpellingCorrectionEnabled = false
+    textView.isAutomaticLinkDetectionEnabled = false
+    textView.isAutomaticDataDetectionEnabled = false
+    textView.isAutomaticTextCompletionEnabled = false
+    textView.isContinuousSpellCheckingEnabled = false
+    textView.isGrammarCheckingEnabled = false
+    textView.smartInsertDeleteEnabled = false
+    textView.string = text
+    return scrollView
+  }
+
+  func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    guard let textView = scrollView.documentView as? NSTextView, textView.string != text else { return }
+    textView.string = text
+  }
+
+  final class Coordinator: NSObject, NSTextViewDelegate {
+    var parent: PlainCommandEditor
+    init(_ parent: PlainCommandEditor) { self.parent = parent }
+
+    func textDidChange(_ notification: Notification) {
+      guard let textView = notification.object as? NSTextView else { return }
+      parent.text = textView.string
+    }
   }
 }

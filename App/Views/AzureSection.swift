@@ -6,6 +6,7 @@ struct AzureSection: View {
   @Environment(WorkspaceModel.self) private var workspace
   @Environment(WorktreeTabsStore.self) private var tabsStore
   @Environment(WorktreeLinksStore.self) private var linksStore
+  @Environment(PRStateStore.self) private var prStates
   var worktree: WorktreeInfo
 
   @State private var model = WorktreeAzureModel()
@@ -42,6 +43,12 @@ struct AzureSection: View {
     .onChange(of: workspace.statuses[worktree.path]?.upstreamOid) { old, new in
       guard old != nil, new != nil else { return }
       startReload()
+    }
+    .onChange(of: model.phase) { _, phase in
+      if phase == .loaded { prStates.set(model.pr?.status, for: worktree) }
+    }
+    .onChange(of: model.pr?.status) { _, status in
+      if model.phase == .loaded { prStates.set(status, for: worktree) }
     }
     .onDisappear { reloadTask?.cancel() }
   }
@@ -226,8 +233,8 @@ private struct BranchPRRow: View {
           HStack(spacing: 6) {
             StatusPill(text: "Branch", tint: .indigo)
             StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
-                       tint: (pr.isDraft ?? false) ? .secondary : .blue)
-            if pr.mergeStatus == "conflicts" {
+                       tint: PRStateStore.tint(for: pr))
+            if pr.status == "active", pr.mergeStatus == "conflicts" {
               StatusPill(text: "Conflicts", tint: .red)
             }
             // String(_:), not raw Int interpolation — Text(_:) parses an
@@ -542,8 +549,8 @@ private struct AdditionalPRCard: View {
         Group {
           if let pr = entry.pr {
             StatusPill(text: (pr.isDraft ?? false) ? "Draft" : pr.status.capitalized,
-                       tint: (pr.isDraft ?? false) ? .secondary : .blue)
-            if pr.mergeStatus == "conflicts" { StatusPill(text: "Conflicts", tint: .red) }
+                       tint: PRStateStore.tint(for: pr))
+            if pr.status == "active", pr.mergeStatus == "conflicts" { StatusPill(text: "Conflicts", tint: .red) }
           }
           // String(_:), not raw Int interpolation — Text(_:) parses an
           // interpolated Int through LocalizedStringKey's number formatting,

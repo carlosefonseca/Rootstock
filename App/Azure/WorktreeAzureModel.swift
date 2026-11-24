@@ -127,7 +127,7 @@ final class WorktreeAzureModel {
         let pull = try await service.pullRequest(remote: remote, branch: branch)
         self.pr = pull
         if let pull {
-          async let unresolved = service.unresolvedCommentCount(remote: remote, prId: pull.pullRequestId)
+          async let unresolved = pull.status == "active" ? service.unresolvedCommentCount(remote: remote, prId: pull.pullRequestId) : 0
           async let builds = service.latestBuildsByPipeline(remote: remote, branch: branch, prId: pull.pullRequestId)
           self.unresolved = await unresolved
           self.pipelines = pipelines(from: await builds)

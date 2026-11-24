@@ -223,6 +223,7 @@ struct WorktreeRow: View {
   var worktree: WorktreeInfo
   var status: WorktreeStatus?
   var cloneName: String? = nil
+  @Environment(PRStateStore.self) private var prStates
 
   var body: some View {
     HStack(spacing: 8) {
@@ -237,6 +238,12 @@ struct WorktreeRow: View {
           .lineLimit(1)
       }
       Spacer(minLength: 0)
+      if let state = prStates.state(for: worktree), state != "active" {
+        Image(systemName: state == "completed" ? "checkmark.circle.fill" : "xmark.circle")
+          .foregroundStyle(state == "completed" ? Color.purple : Color.secondary)
+          .imageScale(.small)
+          .help(state == "completed" ? "Pull request merged — safe to remove" : "Pull request abandoned")
+      }
       if let status, (status.remoteAhead > 0 || status.remoteBehind > 0) {
         AheadBehindBadge(ahead: status.remoteAhead, behind: status.remoteBehind)
       }

@@ -13,16 +13,18 @@ struct AzureService {
     "\(encode(remote.project))/_apis/git/repositories/\(encode(remote.repo))"
   }
 
-  /// The active PR whose source branch is `branch`, if any.
+  /// The PR whose source branch is `branch`: the active one if there is one,
+  /// otherwise the most recent completed/abandoned one — so a merged PR stays
+  /// visible (and the worktree can be recognised as finished).
   func pullRequest(remote: AzureRemote, branch: String) async throws -> ADOPullRequest? {
     let list = try await client.get(ADOList<ADOPullRequest>.self, org: remote.org,
       path: "\(repoPath(remote))/pullrequests",
       query: [
         "searchCriteria.sourceRefName": "refs/heads/\(branch)",
-        "searchCriteria.status": "active",
-        "$top": "1",
+        "searchCriteria.status": "all",
+        "$top": "10",
       ])
-    return list.value.first
+    return list.value.first { $0.status == "active" } ?? list.value.first
   }
 
   /// A single PR by id, regardless of its source branch or status — how
